@@ -288,6 +288,16 @@ def corregir_android_manifest(logbox, nombre_paquete_limpio):
     else:
         safe_log(logbox, "Advertencia: No se encontró el atributo android:theme en la etiqueta <application> para reemplazar.")
 
+    # Corregir el nombre de la actividad principal para evitar ClassNotFoundException
+    activity_pattern = re.compile(r'(<activity[^>]*android:name=")([^"]+)(")')
+    correct_activity_name = f"com.libros3dar.{nombre_paquete_limpio}.MainActivity"
+    if activity_pattern.search(new_content):
+        new_content = activity_pattern.sub(fr'\1{correct_activity_name}\3', new_content)
+        safe_log(logbox, f"✓ Nombre de la actividad principal corregido a: {correct_activity_name}")
+    else:
+        safe_log(logbox, "Advertencia: No se encontró el atributo android:name en la etiqueta <activity> para reemplazar.")
+
+
     try:
         with open(ANDROID_MANIFEST, "w", encoding="utf-8") as f:
             f.write(new_content)
@@ -342,7 +352,8 @@ def update_strings_xml(logbox, nombre: str):
 
 def configurar_webview_camera_completo(logbox, android_dir_arg, nombre_paquete_limpio):
     """
-    Configura MainActivity.java con soporte completo para cámara, WebView y permisos.
+    Genera una MainActivity.java mínima, confiando en Capacitor para manejar los plugins y la configuración del WebView.
+    Esto soluciona errores de carga de plugins y de permisos.
     """
     package_name = f"com.libros3dar.{nombre_paquete_limpio}"
     java_base_dir = os.path.join(android_dir_arg, "app", "src", "main", "java")
@@ -350,129 +361,23 @@ def configurar_webview_camera_completo(logbox, android_dir_arg, nombre_paquete_l
     target_package_full_path = os.path.join(java_base_dir, *target_package_dir_parts)
     main_activity_path = os.path.join(target_package_full_path, "MainActivity.java")
 
-    safe_log(logbox, f"Configurando MainActivity.java completo en: {main_activity_path}")
+    safe_log(logbox, f"Generando MainActivity.java mínima en: {main_activity_path}")
 
+    # Contenido mínimo estándar para una app de Capacitor.
+    # Capacitor se encarga de la inicialización de plugins y del WebView.
     main_activity_content = f"""package {package_name};
 
 import com.getcapacitor.BridgeActivity;
-import android.os.Bundle;
-import android.webkit.WebSettings;
-import android.webkit.WebChromeClient;
-import android.webkit.PermissionRequest;
-import android.webkit.WebView;
-import android.content.pm.PackageManager;
-import android.Manifest;
-import androidx.core.app.ActivityCompat;
-import androidx.core.content.ContextCompat;
 
-public class MainActivity extends BridgeActivity {{
-    
-    private static final int CAMERA_PERMISSION_REQUEST_CODE = 1001;
-    private static final int MICROPHONE_PERMISSION_REQUEST_CODE = 1002;
-
-    @Override
-    public void onCreate(Bundle savedInstanceState) {{
-        super.onCreate(savedInstanceState);
-        
-        // Solicitar permisos en tiempo de ejecución
-        requestCameraPermissions();
-        
-        // Configurar WebView para cámara y AR
-        if (this.bridge != null && this.bridge.getWebView() != null) {{
-            configureWebViewForCamera(this.bridge.getWebView());
-        }}
-    }}
-
-    private void configureWebViewForCamera(WebView webView) {{
-        WebSettings webSettings = webView.getSettings();
-        
-        // Habilitar JavaScript
-        webSettings.setJavaScriptEnabled(true);
-        webSettings.setJavaScriptCanOpenWindowsAutomatically(true);
-        
-        // Habilitar DOM storage
-        webSettings.setDomStorageEnabled(true);
-        
-        // Habilitar acceso a archivos
-        webSettings.setAllowFileAccess(true);
-        webSettings.setAllowContentAccess(true);
-        webSettings.setAllowFileAccessFromFileURLs(true);
-        webSettings.setAllowUniversalAccessFromFileURLs(true);
-        
-        // Configurar para multimedia
-        webSettings.setMediaPlaybackRequiresUserGesture(false);
-        
-        // Configurar WebChromeClient CRÍTICO para manejar permisos de cámara
-        webView.setWebChromeClient(new WebChromeClient() {{
-            @Override
-            public void onPermissionRequest(PermissionRequest request) {{
-                // Conceder automáticamente permisos de cámara
-                if (request.getResources() != null) {{
-                    for (String resource : request.getResources()) {{
-                        if (resource.equals(PermissionRequest.RESOURCE_VIDEO_CAPTURE) ||
-                            resource.equals(PermissionRequest.RESOURCE_AUDIO_CAPTURE)) {{
-                            request.grant(request.getResources());
-                            return;
-                        }}
-                    }}
-                }}
-                super.onPermissionRequest(request);
-            }}
-        }});
-    }}
-
-    private void requestCameraPermissions() {{
-        // Verificar y solicitar permiso de cámara
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) 
-            != PackageManager.PERMISSION_GRANTED) {{
-            ActivityCompat.requestPermissions(this, 
-                new String[]{{Manifest.permission.CAMERA}}, 
-                CAMERA_PERMISSION_REQUEST_CODE);
-        }}
-        
-        // Verificar y solicitar permiso de micrófono
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) 
-            != PackageManager.PERMISSION_GRANTED) {{
-            ActivityCompat.requestPermissions(this, 
-                new String[]{{Manifest.permission.RECORD_AUDIO}}, 
-                MICROPHONE_PERMISSION_REQUEST_CODE);
-        }}
-    }}
-
-    @Override
-    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {{
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        
-        switch (requestCode) {{
-            case CAMERA_PERMISSION_REQUEST_CODE:
-                if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {{
-                    // Permiso de cámara concedido
-                    android.util.Log.d("MainActivity", "Permiso de cámara concedido");
-                }} else {{
-                    // Permiso de cámara denegado
-                    android.util.Log.w("MainActivity", "Permiso de cámara denegado");
-                }}
-                break;
-            case MICROPHONE_PERMISSION_REQUEST_CODE:
-                if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {{
-                    // Permiso de micrófono concedido
-                    android.util.Log.d("MainActivity", "Permiso de micrófono concedido");
-                }} else {{
-                    // Permiso de micrófono denegado
-                    android.util.Log.w("MainActivity", "Permiso de micrófono denegado");
-                }}
-                break;
-        }}
-    }}
-}}
+public class MainActivity extends BridgeActivity {{}}
 """
     try:
         os.makedirs(target_package_full_path, exist_ok=True)
         with open(main_activity_path, "w", encoding="utf-8") as f:
             f.write(main_activity_content)
-        safe_log(logbox, f"✓ MainActivity.java configurado completamente para cámara y WebView")
+        safe_log(logbox, f"✓ MainActivity.java mínima generada correctamente.")
     except Exception as e:
-        safe_log(logbox, f"✗ ERROR al configurar MainActivity.java: {e}")
+        safe_log(logbox, f"✗ ERROR al generar la MainActivity.java mínima: {e}")
         raise
 
 
