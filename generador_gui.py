@@ -1363,51 +1363,53 @@ def generar_network_security_config(logbox, backend_host):
 
 def aplicar_build_gradle_corregido(logbox, nombre):
     """
-    Aplica un build.gradle corregido al proyecto Android para asegurar compatibilidad y compilación exitosa.
-    Incluye el namespace requerido para evitar errores de compilación y actualiza las versiones del SDK.
+    Modifica inteligentemente el build.gradle del proyecto Android para asegurar compatibilidad,
+    preservando las dependencias de los plugins de Capacitor.
+    - Asegura que el namespace esté presente.
+    - Fija las versiones de SDK a las requeridas.
     """
     build_gradle_path = os.path.join(ANDROID_DIR, "app", "build.gradle")
     application_id = f"com.libros3dar.{nombre}"
     
-    build_gradle_content = f"""
-apply plugin: 'com.android.application'
+    safe_log(logbox, f"Modificando inteligentemente build.gradle en: {build_gradle_path}")
 
-android {{
-    namespace "{application_id}"
-    compileSdkVersion 35
-    defaultConfig {{
-        applicationId "{application_id}"
-        minSdkVersion 23
-        targetSdkVersion 35
-        versionCode 1
-        versionName "1.0"
-        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
-    }}
-    buildTypes {{
-        release {{
-            minifyEnabled false
-            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-        }}
-    }}
-    compileOptions {{
-        sourceCompatibility JavaVersion.VERSION_1_8
-        targetCompatibility JavaVersion.VERSION_1_8
-    }}
-}}
-
-dependencies {{
-    implementation fileTree(dir: 'libs', include: ['*.jar'])
-    implementation project(':capacitor-android')
-    implementation 'androidx.appcompat:appcompat:1.6.1'
-    implementation 'com.google.android.material:material:1.11.0'
-}}
-"""
     try:
+        with open(build_gradle_path, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        # 1. Asegurar compileSdkVersion
+        content = re.sub(r'compileSdkVersion \d+', 'compileSdkVersion 35', content)
+        safe_log(logbox, "  - compileSdkVersion fijado a 35.")
+
+        # 2. Asegurar targetSdkVersion
+        content = re.sub(r'targetSdkVersion \d+', 'targetSdkVersion 35', content)
+        safe_log(logbox, "  - targetSdkVersion fijado a 35.")
+        
+        # 3. Asegurar minSdkVersion
+        content = re.sub(r'minSdkVersion \d+', 'minSdkVersion 23', content)
+        safe_log(logbox, "  - minSdkVersion fijado a 23.")
+
+        # 4. Asegurar el namespace. Esto es CRÍTICO para builds recientes.
+        # Si 'namespace' no está, lo insertamos. Si está, lo actualizamos.
+        if 'namespace' not in content:
+            # Insertar el namespace justo después de 'android {'
+            content = re.sub(r'(android\s*{)', rf'\1\n    namespace "{application_id}"', content, 1)
+            safe_log(logbox, f"  - Namespace insertado: {application_id}")
+        else:
+            # Si ya existe, lo reemplazamos para asegurar que es el correcto
+            content = re.sub(r'namespace\s+".+"', f'namespace "{application_id}"', content)
+            safe_log(logbox, f"  - Namespace actualizado a: {application_id}")
+
         with open(build_gradle_path, "w", encoding="utf-8") as f:
-            f.write(build_gradle_content)
-        safe_log(logbox, f"✓ build.gradle actualizado en: {build_gradle_path} con namespace: {application_id}")
+            f.write(content)
+        
+        safe_log(logbox, f"✓ build.gradle modificado exitosamente.")
+
+    except FileNotFoundError:
+        safe_log(logbox, f"✗ ERROR: No se encontró el archivo build.gradle en {build_gradle_path}. Esto no debería pasar si la sincronización de Capacitor fue exitosa.")
+        raise
     except Exception as e:
-        safe_log(logbox, f"✗ ERROR al actualizar build.gradle: {e}")
+        safe_log(logbox, f"✗ ERROR al modificar build.gradle: {e}")
         raise
 
 if __name__ == "__main__":
