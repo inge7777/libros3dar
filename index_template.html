@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <title>${APP_NAME}</title>
 
     <!-- CRÍTICO: Cargar A-Frame y AR.js aquí para asegurar la compatibilidad -->
@@ -11,9 +11,16 @@
     <script src="https://raw.githack.com/AR-js-org/AR.js/3.4.5/aframe/build/aframe-ar.js"></script>
     
     <style>
-        body { font-family: Arial; background: #f4f4f4; margin: 0; padding: 20px; }
+        body, html {
+            height: 100%;
+            width: 100%;
+            margin: 0;
+            padding: 0;
+            overflow: hidden; /* Evita barras de scroll innecesarias */
+        }
+        body { font-family: Arial; background: #f4f4f4; }
         .center-container { text-align: center; margin-top: 50px; }
-        #login, #main, #ar-container, #botonCerrarAR, #loading-screen { display: none; }
+        #login, #main, #ar-container, #botonCerrarAR { display: none; }
         .boton {
             padding: 13px 24px;
             margin: 10px 0;
@@ -46,10 +53,9 @@
     </style>
 </head>
 <body>
-    <div id="loading-screen">
+    <div id="loading-screen" style="display: flex;">
         <div class="loader"></div>
         <p id="loading-text">Cargando...</p>
-        <p id="debug-status" style="font-size: 16px; color: #ccc; margin-top: 10px;"></p>
     </div>
     
     <div id="login" class="center-container">
@@ -68,197 +74,148 @@
     </div>
     
     <div id="ar-container">
-        <a-scene embedded arjs="trackingMethod: best; sourceType: webcam; debugUIEnabled: false;">
-            ${AR_MARKERS_HTML}
-            <a-entity camera></a-entity>
-        </a-scene>
+        <!-- La escena de A-Frame se inyectará aquí dinámicamente para evitar el inicio automático de la cámara -->
     </div>
     
-    <button id="botonCerrarAR" onclick="cerrarAR()" class="boton" style="position: fixed; top: 10px; right: 10px; z-index: 200;">
+    <button id="botonCerrarAR" onclick="cerrarAR()" class="boton" style="position: fixed; top: 10px; right: 10px; z-index: 200; display: none;">
         Salir AR
     </button>
 
     <script>
-        let isCapacitorReady = false;
+        const BACKEND_URL = '${BACKEND_URL}';
+        let isDomReady = false;
         let isARReady = false;
-        const maxRetries = 50;
-        let capacitorRetries = 0;
+        let isCapacitorReady = false;
+
+        function tryInitApp() {
+            if (isDomReady && isARReady && isCapacitorReady) {
+                console.log("All systems go! Initializing app.");
+                checkActivation();
+            }
+        }
 
         document.addEventListener('DOMContentLoaded', () => {
-            console.log('DOMContentLoaded: Documento HTML cargado.');
-            updateDebugStatus('DOM cargado, esperando frameworks...');
+            console.log('DOM ready.');
+            isDomReady = true;
 
-            window.addEventListener('load', () => {
-                if (typeof AFRAME !== 'undefined' && typeof ARjs !== 'undefined' && !AFRAME.components['markerhandler']) {
-                    AFRAME.registerComponent('markerhandler', {
-                        init: function () {
-                            this.el.addEventListener('markerFound', () => {
-                                this.el.setAttribute('visible', true);
-                                console.log('Marcador ENCONTRADO:', this.el.id);
-                            });
-                            this.el.addEventListener('markerLost', () => {
-                                this.el.setAttribute('visible', false);
-                                console.log('Marcador PERDIDO:', this.el.id);
-                            });
-                        }
-                    });
-                    console.log('Componente markerhandler registrado.');
-                    isARReady = true;
-                    updateDebugStatus('Frameworks de AR listos.');
-                    checkActivation();
-                }
-            });
-
-            waitForCapacitor();
+            if (typeof AFRAME !== 'undefined' && typeof ARjs !== 'undefined') {
+                AFRAME.registerComponent('markerhandler', {
+                    init: function () {
+                        this.el.addEventListener('markerFound', () => { this.el.setAttribute('visible', true); });
+                        this.el.addEventListener('markerLost', () => { this.el.setAttribute('visible', false); });
+                    }
+                });
+                console.log('AR libraries ready.');
+                isARReady = true;
+            } else {
+                console.error('AR libraries not found!');
+                alert('Error: No se pudieron cargar las librerías de Realidad Aumentada.');
+            }
+            tryInitApp();
         });
 
-        function updateDebugStatus(message) {
-            const debugElement = document.getElementById('debug-status');
-            if (debugElement) {
-                debugElement.innerText = message;
-            }
-        }
-
-        function waitForCapacitor() {
-            capacitorRetries++;
-            console.log(`waitForCapacitor: Verificando Capacitor... Intento ${capacitorRetries}`);
-            updateDebugStatus(`Verificando Capacitor... Intento ${capacitorRetries}`);
-
-            if (typeof window.Capacitor !== 'undefined' && window.Capacitor.isNative) {
-                console.log('Capacitor detectado y es entorno nativo.');
+        (function waitForCapacitor() {
+            if (window.Capacitor && window.Capacitor.isReady) {
+                console.log('Capacitor ready.');
                 isCapacitorReady = true;
-                if(isARReady) checkActivation();
-                return;
+                tryInitApp();
+            } else {
+                setTimeout(() => {
+                    if (window.Capacitor) {
+                        console.log('Capacitor ready (delayed).');
+                        isCapacitorReady = true;
+                    } else {
+                        console.warn('Capacitor not found, assuming web environment.');
+                        isCapacitorReady = true; // Treat as "ready" for web
+                    }
+                    tryInitApp();
+                }, 500);
             }
-            
-            if (typeof window.Capacitor !== 'undefined' && !window.Capacitor.isNative) {
-                console.log('Capacitor detectado pero no es entorno nativo (posiblemente web).');
-                isCapacitorReady = true;
-                if(isARReady) checkActivation();
-                return;
-            }
+        })();
 
-            if (capacitorRetries > maxRetries) {
-                console.warn('Timeout esperando Capacitor, asumiendo entorno web o fallido.');
-                updateDebugStatus('Timeout. La app podría no ser nativa.');
-                isCapacitorReady = false;
-                if(isARReady) checkActivation();
-                return;
-            }
-
-            setTimeout(waitForCapacitor, 100);
-        }
-
-        async function checkActivation() {
-            console.log('checkActivation: Comprobando estado de activación...');
-            const activated = localStorage.getItem('activated');
-            if (activated === 'true') {
-                console.log('Aplicación activada previamente. Mostrando interfaz principal.');
-                updateDebugStatus('Activado. Cargando interfaz principal...');
+        function checkActivation() {
+            if (localStorage.getItem('activated') === 'true') {
                 document.getElementById('login').style.display = 'none';
                 document.getElementById('main').style.display = 'block';
             } else {
-                console.log('Aplicación no activada. Mostrando pantalla de login.');
-                updateDebugStatus('No activado. Mostrando login...');
                 document.getElementById('login').style.display = 'block';
             }
             document.getElementById('loading-screen').style.display = 'none';
         }
 
         async function activar() {
-            console.log('activar: Intentando activar...');
-            updateDebugStatus('Activando...');
             const clave = document.getElementById('clave').value.trim().toUpperCase();
             const device_id = getDeviceId();
-            
+            const msg = document.getElementById('msg');
+            msg.innerText = 'Activando...';
+
             try {
-                console.log(`Enviando petición a ${BACKEND_URL} con token: ${clave}, device_id: ${device_id}`);
-                const response = await fetch(`${BACKEND_URL}`, {
+                const response = await fetch(BACKEND_URL, {
                     method: "POST",
                     headers: { "Content-Type": "application/x-www-form-urlencoded" },
-                    body: "token=" + encodeURIComponent(clave) + "&device_id=" + encodeURIComponent(device_id)
+                    body: `token=${encodeURIComponent(clave)}&device_id=${encodeURIComponent(device_id)}`
                 });
                 const data = await response.json();
-                const msg = document.getElementById('msg');
                 if (data.status === 'activado') {
-                    console.log('Activación exitosa.');
                     localStorage.setItem('activated', 'true');
                     msg.style.color = 'green';
                     msg.innerText = '¡Activación correcta!';
-                    updateDebugStatus('Activación correcta. Redirigiendo...');
-                    
                     setTimeout(() => {
                         document.getElementById('login').style.display = 'none';
                         document.getElementById('main').style.display = 'block';
                     }, 1500);
-                    
                 } else {
-                    console.warn('Activación fallida:', data.message);
                     msg.style.color = 'red';
                     msg.innerText = data.message || 'Clave incorrecta.';
-                    updateDebugStatus('Activación fallida.');
                 }
             } catch(error) {
-                console.error('Error de conexión con el servidor:', error);
-                document.getElementById('msg').innerText = 'No se pudo conectar con el servidor. Verifica la URL y tu conexión.';
-                updateDebugStatus('Error de conexión.');
+                msg.innerText = 'Error de conexión con el servidor.';
             }
         }
 
         function getDeviceId() {
             let id = localStorage.getItem('device_id');
             if (!id) {
-                id = 'xxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-                    let r = Math.random()*16|0, v = c === 'x' ? r : (r & 0x3 | 0x8);
-                    return v.toString(16);
-                });
+                id = ([1e7]+-1e3+-4e3+-8e3+-1e11).replace(/[018]/g, c =>
+                    (c ^ crypto.getRandomValues(new Uint8Array(1))[0] & 15 >> c / 4).toString(16)
+                );
                 localStorage.setItem('device_id', id);
-                console.log('Generado nuevo Device ID:', id);
-            } else {
-                console.log('Usando Device ID existente:', id);
             }
             return id;
         }
 
         async function iniciarRealidadAumentada() {
-            console.log('iniciarRealidadAumentada: Iniciando AR...');
-            updateDebugStatus('Iniciando cámara...');
             document.getElementById('loading-text').innerText = "Iniciando cámara...";
             document.getElementById('loading-screen').style.display = 'flex';
             document.getElementById('btnIniciarAR').disabled = true;
 
             try {
-                // Solo solicitar permisos de cámara si Capacitor está listo y es nativo
-                if (isCapacitorReady && window.Capacitor.isNative) {
-                    console.log('Solicitando permisos de cámara a través de Capacitor...');
-                    const cameraPermission = await window.Capacitor.Plugins.Camera.requestPermissions();
-                    
-                    if (cameraPermission.camera !== 'granted') {
-                        throw new Error('Permiso de cámara denegado por Capacitor.');
-                    }
-                    console.log('Permiso de cámara concedido por Capacitor.');
-                } else {
-                    console.log('No es entorno nativo o Capacitor no está listo. No se solicitan permisos via Capacitor.');
-                    // En un entorno web, getUserMedia solicitará permisos directamente.
+                if (window.Capacitor && window.Capacitor.isNativePlatform()) {
+                    const perm = await window.Capacitor.Plugins.Camera.requestPermissions();
+                    if (perm.camera !== 'granted') throw new Error('Permiso de cámara denegado.');
                 }
+
+                const arContainer = document.getElementById('ar-container');
+                arContainer.innerHTML = '';
                 
+                const scene = document.createElement('a-scene');
+                scene.setAttribute('embedded', '');
+                scene.setAttribute('arjs', 'trackingMethod: best; sourceType: webcam; debugUIEnabled: false; detectionMode: mono_and_matrix; matrixCodeType: 3x3;');
+                
+                scene.innerHTML = `${AR_MARKERS_HTML}<a-entity camera></a-entity>`;
+                arContainer.appendChild(scene);
+
                 document.getElementById('main').style.display = 'none';
                 document.getElementById('ar-container').style.display = 'block';
                 document.getElementById('botonCerrarAR').style.display = 'block';
                 
-                if (isARReady) {
-                    console.log('A-Frame y AR.js precargados. Ocultando pantalla de carga...');
-                    updateDebugStatus('AR listo. Disfruta!');
+                setTimeout(() => {
                     document.getElementById('loading-screen').style.display = 'none';
                     document.getElementById('btnIniciarAR').disabled = false;
-                } else {
-                    throw new Error('A-Frame o AR.js no se cargaron correctamente.');
-                }
+                }, 1000);
                 
             } catch (e) {
-                console.error("Error al iniciar la Realidad Aumentada:", e);
-                alert('No se pudo iniciar la cámara. Por favor, asegúrate de que la aplicación tenga permisos de cámara y que estés en un dispositivo compatible. Error: ' + e.message);
-                updateDebugStatus('Error AR: ' + e.message);
+                alert('No se pudo iniciar la cámara. Error: ' + e.message);
                 document.getElementById('loading-screen').style.display = 'none';
                 document.getElementById('btnIniciarAR').disabled = false;
                 document.getElementById('main').style.display = 'block';
@@ -266,13 +223,16 @@
         }
 
         function cerrarAR() {
-            console.log('cerrarAR: Saliendo de la Realidad Aumentada.');
+            const arContainer = document.getElementById('ar-container');
+            if (arContainer.firstChild) {
+                arContainer.firstChild.pause();
+            }
+            arContainer.innerHTML = '';
             document.getElementById('ar-container').style.display = 'none';
             document.getElementById('main').style.display = 'block';
             document.getElementById('botonCerrarAR').style.display = 'none';
-            updateDebugStatus('Regresando a la interfaz principal.');
         }
-
     </script>
 </body>
 </html>
+
