@@ -12,18 +12,10 @@ import time # Importar el módulo time
 from tkinter import Tk, Frame, Label, Entry, Button, Listbox, Scrollbar, Text, StringVar, filedialog, messagebox, END, LEFT, RIGHT, BOTH, Y, VERTICAL, NORMAL, DISABLED
 from PIL import Image, ImageOps, ImageDraw # Importar ImageOps y ImageDraw
 from string import Template # Importar Template para el manejo de plantillas HTML
-import unicodedata # Importar unicodedata para limpiar_nombre
 
 # ---------------- RUTAS BASE ----------------
-# Directorio base donde se encuentran todos los proyectos y salidas.
-# Se establece en el directorio padre de la ubicación del script para que coincida con la estructura del proyecto.
-try:
-    SCRIPT_DIR = os.path.dirname(os.path.realpath(__file__))
-    BASE_DIR = os.path.abspath(os.path.join(SCRIPT_DIR, '..'))
-except NameError:
-    # Fallback por si se ejecuta en un entorno donde __file__ no está definido
-    BASE_DIR = os.path.abspath(os.path.join(os.getcwd(), '..'))
-
+# Directorio base donde se encuentran todos los proyectos y salidas
+BASE_DIR = r"D:\libros3dar2"
 # Plantilla de proyecto Capacitor
 CAPACITOR_TEMPLATE = os.path.join(BASE_DIR, "capacitor-template")
 # Directorio de trabajo del proyecto Capacitor (donde se copiará la plantilla y se modificará)
@@ -53,6 +45,7 @@ PS_SCRIPT = os.path.join(GEN_DIR, "generador_apk.ps1")
 # Ruta al archivo de plantilla HTML
 HTML_TEMPLATE_PATH = os.path.join(GEN_DIR, "index_template.html")
 
+import unicodedata # Importar unicodedata para limpiar_nombre
 
 # -------------- FUNCIONES AUXILIARES --------------
 
@@ -127,13 +120,12 @@ def verificar_entorno(logbox) -> bool:
     except Exception as e:
         safe_log(logbox, f"✗ ERROR: Java no está instalado o no accesible: {e}")
         ok = False
-    
     if not os.path.exists(BLENDER_PATH):
         safe_log(logbox, f"✗ ERROR: Blender no encontrado en {BLENDER_PATH}")
         ok = False
     else:
         safe_log(logbox, "✓ Blender encontrado.")
-
+    
     if not shutil.which("npx"):
         safe_log(logbox, "✗ ERROR: 'npx' no encontrado en el PATH del sistema. (¿Node.js instalado?)")
         ok = False
@@ -277,58 +269,14 @@ def corregir_android_manifest(logbox, nombre_paquete_limpio):
 
     new_content = ''.join(new_content_parts)
 
-    # Por último, reemplazar el tema para evitar el error de SplashScreen
-    # Usamos una expresión regular para encontrar y reemplazar el valor de android:theme dentro de la etiqueta <application>
-    # Esto es más robusto que un simple reemplazo de texto.
-    theme_pattern = re.compile(r'(<application[^>]*android:theme=")([^"]+)(")')
-    if theme_pattern.search(new_content):
-        # Apuntar al nuevo AppTheme que se creará en styles.xml
-        new_content = theme_pattern.sub(r'\1@style/AppTheme\3', new_content)
-        safe_log(logbox, "✓ Tema de Android en AndroidManifest.xml cambiado a @style/AppTheme.")
-    else:
-        safe_log(logbox, "Advertencia: No se encontró el atributo android:theme en la etiqueta <application> para reemplazar.")
-
-    # Corregir el nombre de la actividad principal para evitar ClassNotFoundException
-    activity_pattern = re.compile(r'(<activity[^>]*android:name=")([^"]+)(")')
-    correct_activity_name = f"com.libros3dar.{nombre_paquete_limpio}.MainActivity"
-    if activity_pattern.search(new_content):
-        new_content = activity_pattern.sub(fr'\1{correct_activity_name}\3', new_content)
-        safe_log(logbox, f"✓ Nombre de la actividad principal corregido a: {correct_activity_name}")
-    else:
-        safe_log(logbox, "Advertencia: No se encontró el atributo android:name en la etiqueta <activity> para reemplazar.")
-
-
     try:
         with open(ANDROID_MANIFEST, "w", encoding="utf-8") as f:
             f.write(new_content)
-        safe_log(logbox, f"✓ AndroidManifest.xml corregido con {permissions_count} permisos, {features_count} features y tema actualizado.")
+        safe_log(logbox, f"✓ AndroidManifest.xml corregido con {permissions_count} permisos y {features_count} features")
     except Exception as e:
         safe_log(logbox, f"✗ ERROR al corregir AndroidManifest.xml: {e}")
         raise
 
-
-def generar_styles_xml(logbox):
-    """
-    Crea un archivo styles.xml limpio para evitar referencias a Theme.SplashScreen.
-    """
-    styles_path = os.path.join(ANDROID_DIR, "app", "src", "main", "res", "values", "styles.xml")
-    styles_content = """<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <!-- Base application theme. -->
-    <style name="AppTheme" parent="Theme.AppCompat.DayNight.NoActionBar">
-        <!-- Customize your theme here. -->
-    </style>
-</resources>
-"""
-    try:
-        # Asegurarse de que el directorio exista
-        os.makedirs(os.path.dirname(styles_path), exist_ok=True)
-        with open(styles_path, "w", encoding="utf-8") as f:
-            f.write(styles_content)
-        safe_log(logbox, f"✓ Archivo styles.xml limpio generado en: {styles_path}")
-    except Exception as e:
-        safe_log(logbox, f"✗ ERROR al generar styles.xml: {e}")
-        raise
 
 def update_strings_xml(logbox, nombre: str):
     """
@@ -352,8 +300,7 @@ def update_strings_xml(logbox, nombre: str):
 
 def configurar_webview_camera_completo(logbox, android_dir_arg, nombre_paquete_limpio):
     """
-    Genera una MainActivity.java mínima, confiando en Capacitor para manejar los plugins y la configuración del WebView.
-    Esto soluciona errores de carga de plugins y de permisos.
+    Configura MainActivity.java con soporte completo para cámara, WebView y permisos.
     """
     package_name = f"com.libros3dar.{nombre_paquete_limpio}"
     java_base_dir = os.path.join(android_dir_arg, "app", "src", "main", "java")
@@ -361,23 +308,129 @@ def configurar_webview_camera_completo(logbox, android_dir_arg, nombre_paquete_l
     target_package_full_path = os.path.join(java_base_dir, *target_package_dir_parts)
     main_activity_path = os.path.join(target_package_full_path, "MainActivity.java")
 
-    safe_log(logbox, f"Generando MainActivity.java mínima en: {main_activity_path}")
+    safe_log(logbox, f"Configurando MainActivity.java completo en: {main_activity_path}")
 
-    # Contenido mínimo estándar para una app de Capacitor.
-    # Capacitor se encarga de la inicialización de plugins y del WebView.
     main_activity_content = f"""package {package_name};
 
 import com.getcapacitor.BridgeActivity;
+import android.os.Bundle;
+import android.webkit.WebSettings;
+import android.webkit.WebChromeClient;
+import android.webkit.PermissionRequest;
+import android.webkit.WebView;
+import android.content.pm.PackageManager;
+import android.Manifest;
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
 
-public class MainActivity extends BridgeActivity {{}}
+public class MainActivity extends BridgeActivity {{
+    
+    private static final int CAMERA_PERMISSION_REQUEST_CODE = 1001;
+    private static final int MICROPHONE_PERMISSION_REQUEST_CODE = 1002;
+
+    @Override
+    public void onCreate(Bundle savedInstanceState) {{
+        super.onCreate(savedInstanceState);
+        
+        // Solicitar permisos en tiempo de ejecución
+        requestCameraPermissions();
+        
+        // Configurar WebView para cámara y AR
+        if (this.bridge != null && this.bridge.getWebView() != null) {{
+            configureWebViewForCamera(this.bridge.getWebView());
+        }}
+    }}
+
+    private void configureWebViewForCamera(WebView webView) {{
+        WebSettings webSettings = webView.getSettings();
+        
+        // Habilitar JavaScript
+        webSettings.setJavaScriptEnabled(true);
+        webSettings.setJavaScriptCanOpenWindowsAutomatically(true);
+        
+        // Habilitar DOM storage
+        webSettings.setDomStorageEnabled(true);
+        
+        // Habilitar acceso a archivos
+        webSettings.setAllowFileAccess(true);
+        webSettings.setAllowContentAccess(true);
+        webSettings.setAllowFileAccessFromFileURLs(true);
+        webSettings.setAllowUniversalAccessFromFileURLs(true);
+        
+        // Configurar para multimedia
+        webSettings.setMediaPlaybackRequiresUserGesture(false);
+        
+        // Configurar WebChromeClient CRÍTICO para manejar permisos de cámara
+        webView.setWebChromeClient(new WebChromeClient() {{
+            @Override
+            public void onPermissionRequest(PermissionRequest request) {{
+                // Conceder automáticamente permisos de cámara
+                if (request.getResources() != null) {{
+                    for (String resource : request.getResources()) {{
+                        if (resource.equals(PermissionRequest.RESOURCE_VIDEO_CAPTURE) ||
+                            resource.equals(PermissionRequest.RESOURCE_AUDIO_CAPTURE)) {{
+                            request.grant(request.getResources());
+                            return;
+                        }}
+                    }}
+                }}
+                super.onPermissionRequest(request);
+            }}
+        }});
+    }}
+
+    private void requestCameraPermissions() {{
+        // Verificar y solicitar permiso de cámara
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) 
+            != PackageManager.PERMISSION_GRANTED) {{
+            ActivityCompat.requestPermissions(this, 
+                new String[]{{Manifest.permission.CAMERA}}, 
+                CAMERA_PERMISSION_REQUEST_CODE);
+        }}
+        
+        // Verificar y solicitar permiso de micrófono
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) 
+            != PackageManager.PERMISSION_GRANTED) {{
+            ActivityCompat.requestPermissions(this, 
+                new String[]{{Manifest.permission.RECORD_AUDIO}}, 
+                MICROPHONE_PERMISSION_REQUEST_CODE);
+        }}
+    }}
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {{
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        
+        switch (requestCode) {{
+            case CAMERA_PERMISSION_REQUEST_CODE:
+                if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {{
+                    // Permiso de cámara concedido
+                    android.util.Log.d("MainActivity", "Permiso de cámara concedido");
+                }} else {{
+                    // Permiso de cámara denegado
+                    android.util.Log.w("MainActivity", "Permiso de cámara denegado");
+                }}
+                break;
+            case MICROPHONE_PERMISSION_REQUEST_CODE:
+                if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {{
+                    // Permiso de micrófono concedido
+                    android.util.Log.d("MainActivity", "Permiso de micrófono concedido");
+                }} else {{
+                    // Permiso de micrófono denegado
+                    android.util.Log.w("MainActivity", "Permiso de micrófono denegado");
+                }}
+                break;
+        }}
+    }}
+}}
 """
     try:
         os.makedirs(target_package_full_path, exist_ok=True)
         with open(main_activity_path, "w", encoding="utf-8") as f:
             f.write(main_activity_content)
-        safe_log(logbox, f"✓ MainActivity.java mínima generada correctamente.")
+        safe_log(logbox, f"✓ MainActivity.java configurado completamente para cámara y WebView")
     except Exception as e:
-        safe_log(logbox, f"✗ ERROR al generar la MainActivity.java mínima: {e}")
+        safe_log(logbox, f"✗ ERROR al configurar MainActivity.java: {e}")
         raise
 
 
@@ -490,13 +543,17 @@ def ejecutar_cap_sync(logbox, project_dir_arg):
     """
     safe_log(logbox, "Ejecutando 'npx cap sync android'...")
     try:
+        # Navegar al directorio del proyecto Capacitor
+        os.chdir(project_dir_arg)
+        safe_log(logbox, f"Cambiado a directorio: {os.getcwd()}")
+
+        # Definir el comando npx
         # CRÍTICO: Usar shell=True para asegurar que los comandos se encuentren en Windows
-        # Usamos cwd para ejecutar el comando en el directorio correcto sin usar os.chdir
         npx_cmd = "npx cap sync android" 
-        safe_log(logbox, f"Ejecutando: {npx_cmd} en {project_dir_arg}")
+        safe_log(logbox, f"Ejecutando: {npx_cmd}")
         
         # Ejecutar el comando y capturar la salida
-        proc = subprocess.run(npx_cmd, capture_output=True, text=True, encoding="utf-8", check=True, shell=True, cwd=project_dir_arg)
+        proc = subprocess.run(npx_cmd, capture_output=True, text=True, encoding="utf-8", check=True, shell=True)
         safe_log(logbox, proc.stdout)
         if proc.stderr:
             safe_log(logbox, f"npx cap sync ERR: {proc.stderr}")
@@ -513,6 +570,11 @@ def ejecutar_cap_sync(logbox, project_dir_arg):
         safe_log(logbox, f"✗ Error inesperado durante 'npx cap sync android': {e}")
         messagebox.showerror("Error inesperado", f"Ocurrió un error inesperado durante la sincronización: {e}")
         return False
+    finally:
+        # Volver al directorio original si no estamos ya allí
+        if os.getcwd() != project_dir_arg:
+            os.chdir(project_dir_arg)
+            safe_log(logbox, f"Vuelto a directorio original: {os.getcwd()}")
 
 def ejecutar_gradle_build(logbox, project_dir_arg, android_dir_arg):
     """
@@ -521,12 +583,15 @@ def ejecutar_gradle_build(logbox, project_dir_arg, android_dir_arg):
     """
     safe_log(logbox, "Iniciando limpieza y compilación de Gradle directamente...")
     try:
+        # Navegar al directorio android
+        os.chdir(android_dir_arg)
+        safe_log(logbox, f"Cambiado a directorio: {os.getcwd()}")
+
         # Limpiar el proyecto Gradle
         # CRÍTICO: Usar shell=True para asegurar que los comandos se encuentren en Windows
-        # Usamos cwd para ejecutar el comando en el directorio correcto sin usar os.chdir
         clean_cmd = "gradlew clean"
-        safe_log(logbox, f"Ejecutando: {clean_cmd} en {android_dir_arg}")
-        proc_clean = subprocess.run(clean_cmd, capture_output=True, text=True, encoding="utf-8", check=True, shell=True, cwd=android_dir_arg)
+        safe_log(logbox, f"Ejecutando: {clean_cmd}")
+        proc_clean = subprocess.run(clean_cmd, capture_output=True, text=True, encoding="utf-8", check=True, shell=True)
         safe_log(logbox, proc_clean.stdout)
         if proc_clean.stderr:
             safe_log(logbox, f"Gradle clean ERR: {proc_clean.stderr}")
@@ -534,12 +599,16 @@ def ejecutar_gradle_build(logbox, project_dir_arg, android_dir_arg):
 
         # Construir el APK de depuración
         build_cmd = "gradlew assembleDebug"
-        safe_log(logbox, f"Ejecutando: {build_cmd} en {android_dir_arg}")
-        proc_build = subprocess.run(build_cmd, capture_output=True, text=True, encoding="utf-8", check=True, shell=True, cwd=android_dir_arg)
+        safe_log(logbox, f"Ejecutando: {build_cmd}")
+        proc_build = subprocess.run(build_cmd, capture_output=True, text=True, encoding="utf-8", check=True, shell=True)
         safe_log(logbox, proc_build.stdout)
         if proc_build.stderr:
             safe_log(logbox, f"Gradle assembleDebug ERR: {proc_build.stderr}")
         safe_log(logbox, "✓ Gradle assembleDebug completado.")
+
+        # Volver al directorio original del proyecto Capacitor
+        os.chdir(project_dir_arg)
+        safe_log(logbox, f"Vuelto a directorio: {os.getcwd()}")
 
         return True
     except subprocess.CalledProcessError as e:
@@ -562,8 +631,8 @@ class GeneradorGUI:
         self.root.title("Generador Libros 3D AR")
         self.root.geometry("1260x900") # Tamaño de la ventana de la GUI
         self.nombre_libro = StringVar()
-        self.initial_backend_url = "https://192.168.80.16:5000/activar"
-        self.backend_url = StringVar(value=self.initial_backend_url) 
+        # CAMBIO CLAVE AQUÍ: Asegurar que la URL del backend siempre sea HTTPS
+        self.backend_url = StringVar(value="https://192.168.80.16:5000/activar") 
         self.portada_path = StringVar()
         self.propaganda_var = StringVar(value="https://www.youtube.com/shorts/6P7IkbiVGP8")
         self.explicacion_var = StringVar()
@@ -633,11 +702,8 @@ class GeneradorGUI:
         Label(log_frame, text="Log de la Aplicación:", font=("Segoe UI", 10, "bold")).pack(anchor='w')
         self.logbox = Text(log_frame, height=38, width=70, bg="#f4f4f4", state=DISABLED, font=("Consolas", 9))
         self.logbox.pack(side=LEFT, fill=BOTH, expand=True)
-        
-        # Corregido: conectar correctamente el scrollbar al Text widget
-        scrollbar = Scrollbar(log_frame, orient=VERTICAL, command=self.logbox.yview)
-        scrollbar.pack(side=RIGHT, fill=Y)
-        self.logbox.config(yscrollcommand=scrollbar.set)
+        Scrollbar(log_frame, command=self.logbox.yview, orient=VERTICAL).pack(side=RIGHT, fill=Y)
+        self.logbox.config(yscrollcommand=lambda f, l: ()) # Deshabilita el scroll automático para evitar saltos
 
         self.label_progreso = Label(self.root, text="Listo.", relief="sunken", anchor="w", padx=5)
         self.label_progreso.pack(side="bottom", fill="x")
@@ -700,8 +766,8 @@ class GeneradorGUI:
         """Reinicia todos los campos del formulario y la lista de archivos."""
         self.pares.clear()
         self.nombre_libro.set("")
-        # Corregido: Reiniciar a la URL inicial en lugar de google.com
-        self.backend_url.set(self.initial_backend_url)
+        # Asegurar que la URL se reinicie a HTTPS
+        self.backend_url.set("https://www.google.com")
         self.portada_path.set("")
         self.propaganda_var.set("https://www.youtube.com/shorts/6P7IkbiVGP8")
         self.explicacion_var.set("")
@@ -946,6 +1012,7 @@ class GeneradorGUI:
                 "webDir": "www",
                 "bundledWebRuntime": False,
                 "plugins": {
+                    "SplashScreen": {"launchShowDuration": 0},
                     "Camera": {"androidCameraPermission": True}
                 },
                 "server": { # Agregado para el androidScheme
@@ -994,7 +1061,6 @@ bpy.ops.export_scene.gltf(filepath=r'{destino}', export_format='GLB', export_app
         time.sleep(0.1) # Pausa después de escribir script temporal
         try:
             # Ejecuta Blender en modo background con el script Python
-            # Se usa shell=True para compatibilidad con rutas de Windows que puedan tener espacios.
             subprocess.run([BLENDER_PATH, "--background", "--python", temp_script],
                              check=True, timeout=300, # Tiempo límite de 5 minutos
                              stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, encoding="utf-8", shell=True)
@@ -1006,8 +1072,7 @@ bpy.ops.export_scene.gltf(filepath=r'{destino}', export_format='GLB', export_app
             safe_log(self.logbox, f"✗ ERROR: Tiempo de espera agotado en conversión con Blender para {os.path.basename(origen)}")
             raise # Re-lanzar para que el error sea manejado por el llamador
         except Exception as e:
-            # Corregido: Usar self.logbox en lugar de logbox (que no está definido aquí)
-            safe_log(self.logbox, f"✗ ERROR en conversión con Blender: {e}")
+            safe_log(logbox, f"✗ ERROR en conversión con Blender: {e}")
             raise # Re-lanzar para que el error sea manejado por el llamador
         finally:
             if os.path.exists(temp_script):
@@ -1105,7 +1170,10 @@ bpy.ops.export_scene.gltf(filepath=r'{destino}', export_format='GLB', export_app
         """
         # Obtener el nombre limpio del paquete/libro
         nombre = limpiar_nombre(self.nombre_libro.get().strip())
-        
+        # Ruta de la portada dentro del paquete generado (para referencia interna)
+        libro_dir = os.path.join(PAQUETES_DIR, nombre)
+        portada_path_for_ps = os.path.join(libro_dir, "portada.jpg")
+
         if not nombre:
             messagebox.showerror("Error", "El nombre del paquete está vacío. Por favor, ingresa un nombre.")
             return
@@ -1135,10 +1203,6 @@ bpy.ops.export_scene.gltf(filepath=r'{destino}', export_format='GLB', export_app
 
         safe_log(self.logbox, f"DEBUG: URL de backend para network_security_config: {backend_url_gui}")
         # --- FIN DE VALIDACIÓN CRÍTICA ---
-
-        # Sobrescribir styles.xml con una versión limpia para evitar errores de tema
-        generar_styles_xml(self.logbox)
-        time.sleep(0.1)
 
         # Usar el host extraído para generar network_security_config
         # CRÍTICO: Se ha modificado para usar cleartextTrafficPermitted
@@ -1184,10 +1248,13 @@ bpy.ops.export_scene.gltf(filepath=r'{destino}', export_format='GLB', export_app
             # Paso 0: Asegurar que el plugin @capacitor/camera esté añadido
             safe_log(self.logbox, "Verificando e instalando plugin @capacitor/camera...")
             try:
-                # Instalar el plugin con npm, ejecutando en el directorio del proyecto
+                original_cwd = os.getcwd() # Guardar el directorio actual
+                os.chdir(project_dir_arg) # Cambiar al directorio del proyecto Capacitor
+                
+                # Instalar el plugin con npm
                 npm_install_cmd = "npm install @capacitor/camera"
-                safe_log(self.logbox, f"Ejecutando: {npm_install_cmd} en {project_dir_arg}")
-                proc_npm_install = subprocess.run(npm_install_cmd, capture_output=True, text=True, encoding="utf-8", check=False, shell=True, cwd=project_dir_arg)
+                safe_log(self.logbox, f"Ejecutando: {npm_install_cmd}")
+                proc_npm_install = subprocess.run(npm_install_cmd, capture_output=True, text=True, encoding="utf-8", check=False, shell=True)
                 safe_log(self.logbox, proc_npm_install.stdout)
                 if proc_npm_install.stderr:
                     safe_log(self.logbox, f"npm install ERR: {proc_npm_install.stderr}")
@@ -1199,6 +1266,7 @@ bpy.ops.export_scene.gltf(filepath=r'{destino}', export_format='GLB', export_app
                 
                 safe_log(self.logbox, "✓ Plugin @capacitor/camera instalado via npm.")
                 
+                os.chdir(original_cwd) # Volver al directorio original
             except subprocess.CalledProcessError as e:
                 safe_log(self.logbox, f"✗ ERROR al instalar plugin @capacitor/camera con npm: {e.cmd}")
                 safe_log(self.logbox, f"  STDOUT: {e.stdout}")
@@ -1243,7 +1311,7 @@ bpy.ops.export_scene.gltf(filepath=r'{destino}', export_format='GLB', export_app
                 shutil.copy2(apk_file, final_apk_path)
                 safe_log(self.logbox, f"✓ APK copiado a: {final_apk_path}")
 
-                claves_str = "\n".join(self.claves) if self.claves else ""
+                claves_str = ",".join(self.claves) if self.claves else ""
                 if claves_str:
                     clave_file = os.path.join(final_apk_dest_dir, "claves-activacion.txt")
                     with open(clave_file, "w", encoding="utf-8") as f:
@@ -1254,7 +1322,7 @@ bpy.ops.export_scene.gltf(filepath=r'{destino}', export_format='GLB', export_app
                 safe_log(self.logbox, "======== BUILD APK COMPLETADO ========")
                 messagebox.showinfo(
                     "Éxito",
-                    f"APK generado y copiado a: {final_apk_path}\nEl APK está firmado (debug) y listo para instalar.\nPara firma release, configura tu keystore en build.gradle o usa Android Studio."
+                    f"APK generado y copiado a: {final_apk_path}\nEl APK está firmado (debug) y listo para instalar.\nPara firma release, configura tu keystore en generador_apk.ps1 (o usa Android Studio para la firma de lanzamiento)."
                 )
             else:
                 self.set_progress("✗ APK no encontrado después del build.", "red")
@@ -1263,8 +1331,14 @@ bpy.ops.export_scene.gltf(filepath=r'{destino}', export_format='GLB', export_app
         except Exception as e:
             safe_log(self.logbox, f"✗ Error crítico en build_flow_thread: {e}")
             messagebox.showerror("Error crítico", f"Ocurrió un error inesperado durante la compilación del APK: {e}")
+        finally:
+            if os.getcwd() != project_dir_arg:
+                os.chdir(project_dir_arg)
+                safe_log(self.logbox, f"Vuelto a directorio original: {os.getcwd()}")
 
 
+    # Se mantiene la función build_thread original por si acaso, aunque no se usará en el flujo principal
+    # (Esta función usa un script de PowerShell, la nueva implementación usa Gradle directo desde Python)
     def build_thread(self, nombre, portada_path, ps_script_arg, project_dir_arg, android_dir_arg):
         """
         [DEPRECADO] Hilo para ejecutar el script de PowerShell para la compilación del APK.
@@ -1277,9 +1351,8 @@ bpy.ops.export_scene.gltf(filepath=r'{destino}', export_format='GLB', export_app
             messagebox.showerror("Build abortado", "Falta index.html en www. El build no puede continuar.")
             return
         if not os.path.exists(ps_script_arg):
-            # Corregido: usar ps_script_arg en el mensaje de error
             safe_log(self.logbox, f"✗ ERROR: Falta script {ps_script_arg}")
-            messagebox.showerror("Build abortado", f"El script PowerShell no existe: {ps_script_arg}")
+            messagebox.showerror("Build abortado", f"El script PowerShell no existe: {ps_script_path}")
             return
         if not os.path.exists(portada_path):
             safe_log(self.logbox, f"✗ ERROR: Falta portada en {portada_path}")
@@ -1288,6 +1361,8 @@ bpy.ops.export_scene.gltf(filepath=r'{destino}', export_format='GLB', export_app
         safe_log(self.logbox, "======== INICIANDO BUILD DE APK (VIA POWERSHELL) ========")
         claves_str = ",".join(self.claves) if self.claves else ""
         env = os.environ.copy()
+        env["ANDROID_HOME"] = r"D:\androidstudio\sdk"
+        env["JAVA_HOME"] = r"D:\androidstudio\jbr"
         
         cmd = [
             "powershell.exe",
@@ -1298,7 +1373,6 @@ bpy.ops.export_scene.gltf(filepath=r'{destino}', export_format='GLB', export_app
             "-PaqueteNombre",
             nombre,
             "-PortadaPath",
-            portada_path, # Corregido: Faltaba el argumento de la ruta de la portada
             "-Claves",
             claves_str,
             "-ProjectDir",
