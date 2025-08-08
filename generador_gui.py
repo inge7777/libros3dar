@@ -208,44 +208,38 @@ def corregir_android_manifest(logbox, nombre_paquete_limpio):
 
     # Permisos necesarios para AR y WebRTC
     required_permissions = [
-        '<uses-permission android:name="android.permission.CAMERA" />',
-        '<uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />',
-        '<uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />',
-        '<uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />',
-        '<uses-permission android:name="android.permission.RECORD_AUDIO" />',
-        '<uses-permission android:name="android.permission.INTERNET" />',
-        '<uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />',
-        '<uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />',
-        '<uses-permission android:name="android.permission.WAKE_LOCK" />'
+        "android.permission.INTERNET",
+        "android.permission.CAMERA", 
+        "android.permission.RECORD_AUDIO",
+        "android.permission.MODIFY_AUDIO_SETTINGS",
+        "android.permission.ACCESS_NETWORK_STATE",
+        "android.permission.WRITE_EXTERNAL_STORAGE",
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.READ_MEDIA_IMAGES"
     ]
-
-    # Hardware features para AR
+    
+    # Features de hardware necesarias
     hardware_features = [
-        '<uses-feature android:name="android.hardware.camera" android:required="true" />',
-        '<uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />',
-        '<uses-feature android:name="android.hardware.microphone" android:required="false" />'
+        'android.hardware.camera',
+        'android.hardware.camera.autofocus',
+        'android.hardware.camera.front'
     ]
 
-    # Reconstruir manifest con permisos y features
     manifest_content = f'''<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    {''.join([f'    {p}\\n' for p in required_permissions])}
-    {''.join([f'    {f}\\n' for f in hardware_features])}
-
     <application
         android:allowBackup="true"
+        android:hardwareAccelerated="true"
+        android:usesCleartextTraffic="true"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
-        android:roundIcon="@mipmap/ic_launcher_round"
-        android:theme="@style/AppTheme"
-        android:usesCleartextTraffic="true"
-        android:networkSecurityConfig="@xml/network_security_config">
+        android:theme="@style/AppTheme">
 
         <activity
+            android:name="com.libros3dar.{nombre_paquete_limpio}.MainActivity"
             android:exported="true"
             android:launchMode="singleTask"
-            android:name="com.libros3dar.{nombre_paquete_limpio}.MainActivity"
             android:theme="@style/AppTheme.NoActionBarLaunch">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -262,14 +256,34 @@ def corregir_android_manifest(logbox, nombre_paquete_limpio):
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
         </provider>
+        
     </application>
-</manifest>'''
 
-    # Escribir archivo corregido
-    with open(ANDROID_MANIFEST, "w", encoding="utf-8") as f:
-        f.write(manifest_content)
+    <!-- Permisos para AR y Cámara -->
+'''
     
-    safe_log(logbox, f"✓ AndroidManifest.xml reconstruido con permisos de cámara y AR.")
+    for permission in required_permissions:
+        if "STORAGE" in permission:
+             manifest_content += f'    <uses-permission android:name="{permission}" android:maxSdkVersion="32" />\n'
+        else:
+             manifest_content += f'    <uses-permission android:name="{permission}" />\n'
+    
+    manifest_content += '\n    <!-- Características de Hardware -->\n'
+    
+    for feature in hardware_features:
+        required = "true" if feature == "android.hardware.camera" else "false"
+        manifest_content += f'    <uses-feature android:name="{feature}" android:required="{required}" />\n'
+    
+    manifest_content += '    <uses-feature android:glEsVersion="0x00020000" android:required="true" />\n'
+    manifest_content += '\n</manifest>'
+
+    try:
+        with open(ANDROID_MANIFEST, 'w', encoding='utf-8') as f:
+            f.write(manifest_content)
+        safe_log(logbox, f"✓ AndroidManifest.xml actualizado con permisos AR completos")
+    except Exception as e:
+        safe_log(logbox, f"✗ ERROR escribiendo AndroidManifest.xml: {e}")
+        raise
 
 
 def update_strings_xml(logbox, nombre: str):
@@ -295,62 +309,123 @@ def update_strings_xml(logbox, nombre: str):
 def configurar_webview_camera_completo(logbox, android_dir_arg, nombre_paquete_limpio):
     package_name = f"com.libros3dar.{nombre_paquete_limpio}"
     
-    # CRÍTICO: Crear la estructura de directorios correcta
     java_base_dir = os.path.join(android_dir_arg, "app", "src", "main", "java")
-    target_package_dir_parts = package_name.split('.')
-    target_package_full_path = os.path.join(java_base_dir, *target_package_dir_parts)
-    
-    # Asegurar que el directorio existe
+    target_package_full_path = os.path.join(java_base_dir, *package_name.split('.'))
     os.makedirs(target_package_full_path, exist_ok=True)
     
     main_activity_content = f"""package {package_name};
 
-import com.getcapacitor.BridgeActivity;
+import android.Manifest;
+import android.content.pm.PackageManager;
+import android.os.Build;
 import android.os.Bundle;
-import android.webkit.WebSettings;
-import android.webkit.WebChromeClient;
 import android.webkit.PermissionRequest;
-import android.webkit.WebView;
+import android.webkit.WebChromeClient;
+import android.webkit.WebSettings;
+import android.util.Log;
+import android.widget.Toast;
+
+import androidx.annotation.NonNull;
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
+
+import com.getcapacitor.BridgeActivity;
 
 public class MainActivity extends BridgeActivity {{
-    
+    private static final int CAMERA_PERMISSION_REQUEST_CODE = 1001;
+
     @Override
     public void onCreate(Bundle savedInstanceState) {{
         super.onCreate(savedInstanceState);
         
-        // Configurar WebView para cámara y AR
-        if (this.bridge != null && this.bridge.getWebView() != null) {{
-            configureWebViewForCamera(this.bridge.getWebView());
-        }}
+        // Solicitar permisos en tiempo de ejecución
+        requestCameraPermissions();
+        
+        // Configurar WebView después de obtener permisos
+        configureWebView();
     }}
     
-    private void configureWebViewForCamera(WebView webView) {{
-        WebSettings webSettings = webView.getSettings();
-        webSettings.setJavaScriptEnabled(true);
-        webSettings.setDomStorageEnabled(true);
-        webSettings.setMediaPlaybackRequiresUserGesture(false);
+    private void requestCameraPermissions() {{
+        String[] permissions = {{
+            Manifest.permission.CAMERA,
+            Manifest.permission.RECORD_AUDIO,
+            Manifest.permission.MODIFY_AUDIO_SETTINGS
+        }};
         
-        // CRÍTICO: WebChromeClient para permisos de cámara automáticos
-        webView.setWebChromeClient(new WebChromeClient() {{
+        ActivityCompat.requestPermissions(this, permissions, CAMERA_PERMISSION_REQUEST_CODE);
+    }}
+    
+    private void configureWebView() {{
+        getBridge().getWebView().setWebChromeClient(new WebChromeClient() {{
             @Override
-            public void onPermissionRequest(PermissionRequest request) {{
-                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {{
-                    if (request.getResources() != null) {{
-                        for (String resource : request.getResources()) {{
-                            if (resource.equals(PermissionRequest.RESOURCE_VIDEO_CAPTURE) ||
-                                resource.equals(PermissionRequest.RESOURCE_AUDIO_CAPTURE)) {{
-                                request.grant(request.getResources());
+            public void onPermissionRequest(final PermissionRequest request) {{
+                runOnUiThread(() -> {{
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {{
+                        String[] requestedResources = request.getResources();
+                        for (String resource : requestedResources) {{
+                            if (resource.equals(PermissionRequest.RESOURCE_VIDEO_CAPTURE)) {{
+                                if (ContextCompat.checkSelfPermission(MainActivity.this, 
+                                    Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {{
+                                    request.grant(new String[]{{PermissionRequest.RESOURCE_VIDEO_CAPTURE}});
+                                }} else {{
+                                    request.deny();
+                                }}
+                                return;
+                            }}
+                            if (resource.equals(PermissionRequest.RESOURCE_AUDIO_CAPTURE)) {{
+                                if (ContextCompat.checkSelfPermission(MainActivity.this, 
+                                    Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {{
+                                    request.grant(new String[]{{PermissionRequest.RESOURCE_AUDIO_CAPTURE}});
+                                }} else {{
+                                    request.deny();
+                                }}
                                 return;
                             }}
                         }}
                     }}
-                }}
+                    request.deny();
+                }});
+            }}
+            
+            @Override
+            public void onPermissionRequestCanceled(PermissionRequest request) {{
+                super.onPermissionRequestCanceled(request);
+                Log.w("WebChromeClient", "Permission request canceled");
             }}
         }});
+        
+        WebSettings settings = getBridge().getWebView().getSettings();
+        settings.setJavaScriptEnabled(true);
+        settings.setDomStorageEnabled(true);
+        settings.setAllowFileAccess(true);
+        settings.setAllowFileAccessFromFileURLs(true);
+        settings.setAllowUniversalAccessFromFileURLs(true);
+        settings.setMediaPlaybackRequiresUserGesture(false);
+        settings.setJavaScriptCanOpenWindowsAutomatically(true);
+    }}
+    
+    @Override
+    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {{
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        
+        if (requestCode == CAMERA_PERMISSION_REQUEST_CODE) {{
+            boolean allGranted = true;
+            for (int result : grantResults) {{
+                if (result != PackageManager.PERMISSION_GRANTED) {{
+                    allGranted = false;
+                    break;
+                }}
+            }}
+            
+            if (allGranted) {{
+                configureWebView();
+            }} else {{
+                Toast.makeText(this, "Permisos de cámara requeridos para AR", Toast.LENGTH_LONG).show();
+            }}
+        }}
     }}
 }}"""
     
-    # Escribir el archivo MainActivity.java
     main_activity_path = os.path.join(target_package_full_path, "MainActivity.java")
     with open(main_activity_path, "w", encoding="utf-8") as f:
         f.write(main_activity_content)
@@ -846,9 +921,18 @@ class GeneradorGUI:
             config_path = os.path.join(PROJECT_DIR, "capacitor.config.json")
             with open(config_path, "w", encoding="utf-8") as f:
                 json.dump({
-                    "appId": f"com.libros3dar.{nombre}", "appName": nombre, "webDir": "www",
-                    "server": {"androidScheme": "https"},
-                    "plugins": {"SplashScreen": {"launchShowDuration": 0}}
+                    "appId": f"com.libros3dar.{nombre}",
+                    "appName": nombre,
+                    "webDir": "www",
+                    "bundledWebRuntime": False,
+                    "server": {
+                        "androidScheme": "https"
+                    },
+                    "android": {
+                        "allowMixedContent": True,
+                        "captureInput": True,
+                        "webContentsDebuggingEnabled": True
+                    }
                 }, f, indent=4)
             safe_log(self.logbox, f"✓ capacitor.config.json actualizado.")
 
@@ -1147,60 +1231,87 @@ class GeneradorGUI:
 </html>"""
 
     def generate_ar_viewer_html(self, nombre, marcadores_ar_html):
-        # NOTA: La generación de marcadores personalizados está incompleta porque no crea los archivos .patt.
-        # Se reemplaza con marcadores funcionales que cargan los modelos GLB para demostrar que el flujo de la app funciona.
-        # Para una solución completa, se necesitaría implementar un generador de .patt o usar NFT.
         return f"""
 <!DOCTYPE html>
-<html lang="es">
+<html>
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Realidad Aumentada - {nombre}</title>
-    <!-- Usar la versión estándar de AR.js para marcadores -->
+    <meta charset="utf-8">
+    <title>AR App</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <script src="https://aframe.io/releases/1.4.0/aframe.min.js"></script>
-    <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
-    <style>
-        body {{ margin: 0; overflow: hidden; }}
-        .ar-overlay {{ position: fixed; top: 10px; left: 10px; background: rgba(0,0,0,0.7); color: white; padding: 10px; border-radius: 5px; font-family: Arial, sans-serif; z-index: 10; }}
-        .back-btn {{ position: fixed; top: 10px; right: 10px; background: #f44336; color: white; border: none; padding: 10px 15px; border-radius: 5px; cursor: pointer; z-index: 10; font-size: 1rem; }}
-    </style>
+    <script src="https://cdn.jsdelivr.net/gh/AR-js-org/AR.js@3.4.5/aframe/build/aframe-ar.min.js"></script>
 </head>
-<body>
-    <div class="ar-overlay">
-        <span>Buscando marcadores...</span>
-    </div>
-    <button class="back-btn" onclick="goBack()">← Volver</button>
-    
-    <!-- Escena AR.js simplificada y funcional.
-         El problema original era la falta de generación de archivos .patt para los marcadores.
-         Esta versión usa marcadores de patrón predeterminados (hiro, kanji) como ejemplo
-         y carga los modelos 3D del usuario en ellos.
-    -->
-    <a-scene embedded arjs='sourceType: webcam; debugUIEnabled: false;'>
+<body style="margin: 0; overflow: hidden;">
+    <a-scene
+        embedded
+        arjs="sourceType: webcam; debugUIEnabled: false; detectionMode: mono_and_matrix; matrixCodeType: 3x3;"
+        vr-mode-ui="enabled: false"
+        renderer="logarithmicDepthBuffer: true;"
+        device-orientation-permission-ui="enabled: false">
         
-        <!-- Marcador de ejemplo 1: HIRO -->
         <a-marker preset="hiro">
-            <a-entity
-                gltf-model="url({self.pares[0]['base'] if self.pares else ''}.glb)"
-                scale="0.3 0.3 0.3"
-                animation-mixer>
-            </a-entity>
+            <a-box position="0 0.5 0" material="color: red;"></a-box>
         </a-marker>
-
-        <!-- Marcador de ejemplo 2: KANJI (si hay más de un modelo) -->
-        {"<a-marker preset='kanji'><a-entity gltf-model='url(" + (self.pares[1]['base'] if len(self.pares) > 1 else '') + ".glb)' scale='0.3 0.3 0.3' animation-mixer></a-entity></a-marker>" if len(self.pares) > 1 else ""}
-
+        
         <a-entity camera></a-entity>
     </a-scene>
 
     <script>
-        function goBack() {{ window.location.href = 'main-menu.html'; }}
-        // Redirigir si no está activado
-        if (localStorage.getItem('app_activated') !== 'true') {{
-            alert('Acceso no autorizado. Redirigiendo...');
-            window.location.href = 'index.html';
+        // Solicitar permisos de cámara explícitamente
+        function requestCameraPermission() {{
+            return new Promise((resolve, reject) => {{
+                if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {{
+                    reject(new Error('getUserMedia no está disponible'));
+                    return;
+                }}
+
+                navigator.mediaDevices.getUserMedia({{ 
+                    video: {{ 
+                        facingMode: 'environment',
+                        width: {{ ideal: 1280 }},
+                        height: {{ ideal: 720 }}
+                    }}, 
+                    audio: false 
+                }})
+                .then(stream => {{
+                    // Detener el stream inmediatamente, solo necesitamos el permiso
+                    stream.getTracks().forEach(track => track.stop());
+                    resolve(true);
+                }})
+                .catch(err => {{
+                    console.error('Error obteniendo acceso a la cámara:', err);
+                    reject(err);
+                }});
+            }});
         }}
+
+        // Inicializar AR después de obtener permisos
+        window.addEventListener('load', async () => {{
+            try {{
+                console.log('Solicitando permisos de cámara...');
+                await requestCameraPermission();
+                console.log('Permisos de cámara obtenidos');
+                
+                // Inicializar A-Frame
+                const scene = document.querySelector('a-scene');
+                if (scene.hasLoaded) {{
+                    console.log('A-Frame ya cargado');
+                }} else {{
+                    scene.addEventListener('loaded', () => {{
+                        console.log('A-Frame cargado correctamente');
+                    }});
+                }}
+            }} catch (error) {{
+                console.error('Error inicializando AR:', error);
+                document.body.innerHTML = `
+                    <div style="padding: 20px; text-align: center;">
+                        <h2>Error de Cámara</h2>
+                        <p>No se pudo acceder a la cámara: ${{error.message}}</p>
+                        <button onclick="location.reload()">Reintentar</button>
+                    </div>
+                `;
+            }}
+        }});
     </script>
 </body>
 </html>"""
@@ -1679,4 +1790,3 @@ if __name__ == "__main__":
     root = Tk()
     app = GeneradorGUI(root)
     root.mainloop()
-
