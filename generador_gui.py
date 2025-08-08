@@ -42,9 +42,6 @@ BACKEND_DB = os.path.join(BASE_DIR, "BACKEND", "activaciones.db")
 # Script de PowerShell para la compilación del APK (se mantiene para referencia, aunque ahora se usa Gradle directo)
 PS_SCRIPT = os.path.join(GEN_DIR, "generador_apk.ps1")
 
-# Ruta al archivo de plantilla HTML
-HTML_TEMPLATE_PATH = os.path.join(GEN_DIR, "index_template.html")
-
 import unicodedata # Importar unicodedata para limpiar_nombre
 
 # -------------- FUNCIONES AUXILIARES --------------
@@ -152,9 +149,13 @@ def verificar_entorno(logbox) -> bool:
         cursor = conn.cursor()
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS activaciones (
-                token TEXT PRIMARY KEY,
-                device_id TEXT,
-                fecha TEXT
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                token TEXT NOT NULL,
+                device_id TEXT DEFAULT '',
+                fecha TEXT NOT NULL,
+                usado INTEGER DEFAULT 0,
+                fecha_uso TEXT DEFAULT NULL,
+                UNIQUE(token, device_id)
             )
         """)
         conn.commit()
@@ -174,16 +175,16 @@ def verificar_entorno(logbox) -> bool:
 
 def insertar_claves_en_backend(claves: list):
     """
-    Agrega las claves de activación generadas a la tabla 'activaciones'
-    en la base de datos SQLite del backend.
+    Agrega las claves de activación generadas a la tabla 'activaciones'.
     """
     try:
         conn = sqlite3.connect(BACKEND_DB)
         cursor = conn.cursor()
         fecha = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         for clave in claves:
-            cursor.execute("INSERT INTO activaciones (token, device_id, fecha) VALUES (?, ?, ?)",
-                          (clave, "", fecha))
+            # Inserta solo el token y la fecha. El device_id se asociará en el primer uso.
+            cursor.execute("INSERT OR IGNORE INTO activaciones (token, fecha) VALUES (?, ?)",
+                          (clave, fecha))
         conn.commit()
         conn.close()
     except Exception as e:
@@ -191,91 +192,73 @@ def insertar_claves_en_backend(claves: list):
 
 def corregir_android_manifest(logbox, nombre_paquete_limpio):
     """
-    Corrige AndroidManifest.xml con todos los permisos necesarios para AR y cámara.
+    Reconstruye AndroidManifest.xml con todos los permisos y features necesarios para AR.
     """
-    if not os.path.exists(ANDROID_MANIFEST):
-        safe_log(logbox, f"Advertencia: AndroidManifest.xml no encontrado en {ANDROID_MANIFEST}")
+    if not os.path.exists(os.path.dirname(ANDROID_MANIFEST)):
+        safe_log(logbox, f"Error: El directorio para AndroidManifest.xml no existe. Abortando.")
         return
 
-    safe_log(logbox, f"Corrigiendo AndroidManifest.xml completo para: {nombre_paquete_limpio}")
-
-    # Leer el archivo existente
-    with open(ANDROID_MANIFEST, "r", encoding="utf-8") as f:
-        content = f.read()
-
-    # Permisos necesarios
+    # Permisos necesarios para AR y WebRTC
     required_permissions = [
-        '    <uses-permission android:name="android.permission.CAMERA" />',
-        '    <uses-permission android:name="android.permission.RECORD_AUDIO" />',
-        '    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />',
-        '    <uses-permission android:name="android.permission.INTERNET" />',
-        '    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />',
-        '    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />',
-        '    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />',
-        '    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />'
+        '<uses-permission android:name="android.permission.CAMERA" />',
+        '<uses-permission android:name="android.permission.RECORD_AUDIO" />',
+        '<uses-permission android:name="android.permission.INTERNET" />',
+        '<uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />',
+        '<uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />',
+        '<uses-permission android:name="android.permission.WAKE_LOCK" />'
     ]
 
-    # Hardware features
+    # Hardware features para AR
     hardware_features = [
-        '    <uses-feature android:name="android.hardware.camera" android:required="true" />',
-        '    <uses-feature android:name="android.hardware.camera.autofocus" />',
-        '    <uses-feature android:name="android.hardware.microphone" />'
+        '<uses-feature android:name="android.hardware.camera" android:required="true" />',
+        '<uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />',
+        '<uses-feature android:name="android.hardware.microphone" android:required="false" />'
     ]
+
+    # Reconstruir manifest con permisos y features
+    manifest_content = f'''<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    {''.join([f'    {p}\\n' for p in required_permissions])}
+    {''.join([f'    {f}\\n' for f in hardware_features])}
+
+    <application
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:theme="@style/AppTheme"
+        android:usesCleartextTraffic="true"
+        android:networkSecurityConfig="@xml/network_security_config">
+
+        <activity
+            android:exported="true"
+            android:launchMode="singleTask"
+            android:name="com.libros3dar.{nombre_paquete_limpio}.MainActivity"
+            android:theme="@style/AppTheme.NoActionBarLaunch">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="com.libros3dar.{nombre_paquete_limpio}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+    </application>
+</manifest>'''
+
+    # Escribir archivo corregido
+    with open(ANDROID_MANIFEST, "w", encoding="utf-8") as f:
+        f.write(manifest_content)
     
-    # Reconstruir el manifiesto para asegurar la correcta colocación de las etiquetas
-    manifest_start = content.find('<manifest')
-    if manifest_start == -1:
-        safe_log(logbox, "✗ ERROR: No se encontró la etiqueta <manifest> en el archivo.")
-        return
-        
-    manifest_end = content.find('>', manifest_start)
-    if manifest_end == -1:
-        safe_log(logbox, "✗ ERROR: Etiqueta <manifest> malformada o incompleta.")
-        return
-
-    # Extraer la parte antes de la etiqueta de cierre, la etiqueta de aplicación y el resto del contenido
-    manifest_tag = content[manifest_start:manifest_end+1]
-    rest_of_content = content[manifest_end+1:]
-    
-    application_start = rest_of_content.find('<application')
-    application_end = rest_of_content.find('>', application_start) if application_start != -1 else -1
-
-    new_content_parts = [manifest_tag]
-    
-    # Añadir permisos y features
-    permissions_count = 0
-    features_count = 0
-    for permission in required_permissions:
-        if permission.strip() not in rest_of_content:
-            new_content_parts.append('\n' + permission)
-            permissions_count += 1
-            
-    for feature in hardware_features:
-        if feature.strip() not in rest_of_content:
-            new_content_parts.append('\n' + feature)
-            features_count += 1
-
-    if application_start != -1:
-        # Reconstruir la etiqueta application para asegurar el networkSecurityConfig
-        application_tag = rest_of_content[application_start:application_end+1]
-        if 'android:networkSecurityConfig=' not in application_tag:
-            application_tag = application_tag.replace('<application', 
-                                                    '<application\n        android:networkSecurityConfig="@xml/network_security_config"')
-        new_content_parts.append(rest_of_content[:application_start])
-        new_content_parts.append(application_tag)
-        new_content_parts.append(rest_of_content[application_end+1:])
-    else:
-        new_content_parts.append(rest_of_content)
-
-    new_content = ''.join(new_content_parts)
-
-    try:
-        with open(ANDROID_MANIFEST, "w", encoding="utf-8") as f:
-            f.write(new_content)
-        safe_log(logbox, f"✓ AndroidManifest.xml corregido con {permissions_count} permisos y {features_count} features")
-    except Exception as e:
-        safe_log(logbox, f"✗ ERROR al corregir AndroidManifest.xml: {e}")
-        raise
+    safe_log(logbox, f"✓ AndroidManifest.xml reconstruido con permisos de cámara y AR.")
 
 
 def update_strings_xml(logbox, nombre: str):
@@ -299,17 +282,16 @@ def update_strings_xml(logbox, nombre: str):
         raise
 
 def configurar_webview_camera_completo(logbox, android_dir_arg, nombre_paquete_limpio):
-    """
-    Configura MainActivity.java con soporte completo para cámara, WebView y permisos.
-    """
     package_name = f"com.libros3dar.{nombre_paquete_limpio}"
+    
+    # CRÍTICO: Crear la estructura de directorios correcta
     java_base_dir = os.path.join(android_dir_arg, "app", "src", "main", "java")
     target_package_dir_parts = package_name.split('.')
     target_package_full_path = os.path.join(java_base_dir, *target_package_dir_parts)
-    main_activity_path = os.path.join(target_package_full_path, "MainActivity.java")
-
-    safe_log(logbox, f"Configurando MainActivity.java completo en: {main_activity_path}")
-
+    
+    # Asegurar que el directorio existe
+    os.makedirs(target_package_full_path, exist_ok=True)
+    
     main_activity_content = f"""package {package_name};
 
 import com.getcapacitor.BridgeActivity;
@@ -318,53 +300,29 @@ import android.webkit.WebSettings;
 import android.webkit.WebChromeClient;
 import android.webkit.PermissionRequest;
 import android.webkit.WebView;
-import android.content.pm.PackageManager;
-import android.Manifest;
-import androidx.core.app.ActivityCompat;
-import androidx.core.content.ContextCompat;
 
 public class MainActivity extends BridgeActivity {{
     
-    private static final int CAMERA_PERMISSION_REQUEST_CODE = 1001;
-    private static final int MICROPHONE_PERMISSION_REQUEST_CODE = 1002;
-
     @Override
     public void onCreate(Bundle savedInstanceState) {{
         super.onCreate(savedInstanceState);
-        
-        // Solicitar permisos en tiempo de ejecución
-        requestCameraPermissions();
         
         // Configurar WebView para cámara y AR
         if (this.bridge != null && this.bridge.getWebView() != null) {{
             configureWebViewForCamera(this.bridge.getWebView());
         }}
     }}
-
+    
     private void configureWebViewForCamera(WebView webView) {{
         WebSettings webSettings = webView.getSettings();
-        
-        // Habilitar JavaScript
         webSettings.setJavaScriptEnabled(true);
-        webSettings.setJavaScriptCanOpenWindowsAutomatically(true);
-        
-        // Habilitar DOM storage
         webSettings.setDomStorageEnabled(true);
-        
-        // Habilitar acceso a archivos
-        webSettings.setAllowFileAccess(true);
-        webSettings.setAllowContentAccess(true);
-        webSettings.setAllowFileAccessFromFileURLs(true);
-        webSettings.setAllowUniversalAccessFromFileURLs(true);
-        
-        // Configurar para multimedia
         webSettings.setMediaPlaybackRequiresUserGesture(false);
         
-        // Configurar WebChromeClient CRÍTICO para manejar permisos de cámara
+        // CRÍTICO: WebChromeClient para permisos de cámara automáticos
         webView.setWebChromeClient(new WebChromeClient() {{
             @Override
             public void onPermissionRequest(PermissionRequest request) {{
-                // Conceder automáticamente permisos de cámara
                 if (request.getResources() != null) {{
                     for (String resource : request.getResources()) {{
                         if (resource.equals(PermissionRequest.RESOURCE_VIDEO_CAPTURE) ||
@@ -374,64 +332,16 @@ public class MainActivity extends BridgeActivity {{
                         }}
                     }}
                 }}
-                super.onPermissionRequest(request);
             }}
         }});
     }}
-
-    private void requestCameraPermissions() {{
-        // Verificar y solicitar permiso de cámara
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) 
-            != PackageManager.PERMISSION_GRANTED) {{
-            ActivityCompat.requestPermissions(this, 
-                new String[]{{Manifest.permission.CAMERA}}, 
-                CAMERA_PERMISSION_REQUEST_CODE);
-        }}
-        
-        // Verificar y solicitar permiso de micrófono
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) 
-            != PackageManager.PERMISSION_GRANTED) {{
-            ActivityCompat.requestPermissions(this, 
-                new String[]{{Manifest.permission.RECORD_AUDIO}}, 
-                MICROPHONE_PERMISSION_REQUEST_CODE);
-        }}
-    }}
-
-    @Override
-    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {{
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        
-        switch (requestCode) {{
-            case CAMERA_PERMISSION_REQUEST_CODE:
-                if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {{
-                    // Permiso de cámara concedido
-                    android.util.Log.d("MainActivity", "Permiso de cámara concedido");
-                }} else {{
-                    // Permiso de cámara denegado
-                    android.util.Log.w("MainActivity", "Permiso de cámara denegado");
-                }}
-                break;
-            case MICROPHONE_PERMISSION_REQUEST_CODE:
-                if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {{
-                    // Permiso de micrófono concedido
-                    android.util.Log.d("MainActivity", "Permiso de micrófono concedido");
-                }} else {{
-                    // Permiso de micrófono denegado
-                    android.util.Log.w("MainActivity", "Permiso de micrófono denegado");
-                }}
-                break;
-        }}
-    }}
-}}
-"""
-    try:
-        os.makedirs(target_package_full_path, exist_ok=True)
-        with open(main_activity_path, "w", encoding="utf-8") as f:
-            f.write(main_activity_content)
-        safe_log(logbox, f"✓ MainActivity.java configurado completamente para cámara y WebView")
-    except Exception as e:
-        safe_log(logbox, f"✗ ERROR al configurar MainActivity.java: {e}")
-        raise
+}}"""
+    
+    # Escribir el archivo MainActivity.java
+    main_activity_path = os.path.join(target_package_full_path, "MainActivity.java")
+    with open(main_activity_path, "w", encoding="utf-8") as f:
+        f.write(main_activity_content)
+    safe_log(logbox, f"✓ MainActivity.java configurado y escrito en: {main_activity_path}")
 
 
 def actualizar_paquete_main_activity(logbox, android_package_name):
@@ -536,45 +446,53 @@ def preparar_proyecto_capacitor(logbox):
     safe_log(logbox, "✓ Carpetas mipmap en proyecto de trabajo verificadas/creadas.")
 
 
-def ejecutar_cap_sync(logbox, project_dir_arg):
+def ejecutar_cap_sync(logbox, project_dir_arg, update=False):
     """
-    Ejecuta 'npx cap sync android' para sincronizar el proyecto web con el proyecto nativo de Android.
-    Esto es crucial para que los cambios en capacitor.config.json y la carpeta www se reflejen.
+    Ejecuta los comandos de Capacitor 'update', 'sync' y 'copy' para una integración completa.
     """
-    safe_log(logbox, "Ejecutando 'npx cap sync android'...")
+    safe_log(logbox, "Iniciando secuencia de actualización de Capacitor...")
+    original_cwd = os.getcwd()
     try:
-        # Navegar al directorio del proyecto Capacitor
         os.chdir(project_dir_arg)
         safe_log(logbox, f"Cambiado a directorio: {os.getcwd()}")
 
-        # Definir el comando npx
-        # CRÍTICO: Usar shell=True para asegurar que los comandos se encuentren en Windows
-        npx_cmd = "npx cap sync android" 
-        safe_log(logbox, f"Ejecutando: {npx_cmd}")
+        if update:
+            # 1. Update
+            safe_log(logbox, "Ejecutando 'npx cap update'...")
+            proc_update = subprocess.run("npx cap update", capture_output=True, text=True, encoding="utf-8", check=True, shell=True)
+            safe_log(logbox, proc_update.stdout)
+            if proc_update.stderr: safe_log(logbox, f"npx cap update ERR: {proc_update.stderr}")
+            safe_log(logbox, "✓ 'npx cap update' completado.")
+
+        # 2. Sync
+        safe_log(logbox, "Ejecutando 'npx cap sync android'...")
+        proc_sync = subprocess.run("npx cap sync android", capture_output=True, text=True, encoding="utf-8", check=True, shell=True)
+        safe_log(logbox, proc_sync.stdout)
+        if proc_sync.stderr: safe_log(logbox, f"npx cap sync ERR: {proc_sync.stderr}")
+        safe_log(logbox, "✓ 'npx cap sync android' completado.")
         
-        # Ejecutar el comando y capturar la salida
-        proc = subprocess.run(npx_cmd, capture_output=True, text=True, encoding="utf-8", check=True, shell=True)
-        safe_log(logbox, proc.stdout)
-        if proc.stderr:
-            safe_log(logbox, f"npx cap sync ERR: {proc.stderr}")
-        
-        safe_log(logbox, "✓ 'npx cap sync android' completado exitosamente.")
+        # 3. Copy
+        safe_log(logbox, "Ejecutando 'npx cap copy android'...")
+        proc_copy = subprocess.run("npx cap copy android", capture_output=True, text=True, encoding="utf-8", check=True, shell=True)
+        safe_log(logbox, proc_copy.stdout)
+        if proc_copy.stderr: safe_log(logbox, f"npx cap copy ERR: {proc_copy.stderr}")
+        safe_log(logbox, "✓ 'npx cap copy android' completado. Esto asegura que capacitor.js esté en su sitio.")
+
         return True
     except subprocess.CalledProcessError as e:
-        safe_log(logbox, f"✗ ERROR en la ejecución de 'npx cap sync android': {e.cmd}")
+        safe_log(logbox, f"✗ ERROR en la ejecución de Capacitor: {e.cmd}")
         safe_log(logbox, f"  STDOUT: {e.stdout}")
         safe_log(logbox, f"  STDERR: {e.stderr}")
         messagebox.showerror("Error de Sincronización Capacitor", f"La sincronización de Capacitor falló. Revisa el log.")
         return False
     except Exception as e:
-        safe_log(logbox, f"✗ Error inesperado durante 'npx cap sync android': {e}")
+        safe_log(logbox, f"✗ Error inesperado durante la ejecución de Capacitor: {e}")
         messagebox.showerror("Error inesperado", f"Ocurrió un error inesperado durante la sincronización: {e}")
         return False
     finally:
-        # Volver al directorio original si no estamos ya allí
-        if os.getcwd() != project_dir_arg:
-            os.chdir(project_dir_arg)
-            safe_log(logbox, f"Vuelto a directorio original: {os.getcwd()}")
+        # Volver al directorio original
+        os.chdir(original_cwd)
+        safe_log(logbox, f"Vuelto a directorio original: {os.getcwd()}")
 
 def ejecutar_gradle_build(logbox, project_dir_arg, android_dir_arg):
     """
@@ -816,225 +734,107 @@ class GeneradorGUI:
         safe_log(self.logbox, "✓ Todos los archivos seleccionados verificados en sus rutas originales.")
         return True
 
+    def _generar_codigo_eco(self):
+        """Genera un código de activación único con el formato ECO-XXXX-YYYY-ZZZZ."""
+        parts = str(uuid.uuid4()).upper().split('-')
+        return f"ECO-{parts[0][:4]}-{parts[1]}-{parts[2]}"
 
     def generar_paquete(self):
         """
         Genera el paquete de contenido, copia los assets, genera claves de activación
-        y crea el archivo index.html principal con la lógica de Realidad Aumentada.
+        y crea los archivos HTML para el flujo de activación y AR.
         """
         self.set_progress("Generando paquete...")
-        # Limpiar y normalizar el nombre del libro/paquete
         nombre = limpiar_nombre(self.nombre_libro.get().strip())
-        # Obtener la URL del backend tal como está en el campo de la GUI
         backend_url = self.backend_url.get().strip()
-        
-        # --- VALIDACIÓN CRÍTICA DE LA URL DEL BACKEND ---
-        
+
         if not backend_url.startswith("https://"):
-            messagebox.showerror("Error de URL", "La URL del Backend de activación DEBE comenzar con 'https://'.")
+            messagebox.showerror("Error de URL", "La URL del Backend debe comenzar con 'https://'.")
             self.set_progress("Error: URL no es HTTPS.", "red")
             return False
-            
-        safe_log(self.logbox, f"DEBUG: URL de backend validada y utilizada en index.html: {backend_url}")
-        # --- FIN DE VALIDACIÓN CRÍTICA ---
 
         try:
             cantidad = int(self.cant_claves_var.get().strip())
-            if cantidad <= 0:
-                raise ValueError("Cantidad inválida")
+            if cantidad <= 0: raise ValueError("Cantidad inválida")
         except Exception:
-            messagebox.showerror("Error", "Cantidad de claves inválida. Debe ser un número positivo.")
-            self.set_progress("Error cantidad claves.", "red")
+            messagebox.showerror("Error", "Cantidad de claves inválida.")
             return False
 
-        # Validaciones de campos obligatorios
-        if not nombre or not backend_url or not self._portada_path_full:
-            messagebox.showerror("Error", "Datos obligatorios incompletos (Nombre del Paquete, URL Backend, Portada).")
-            self.set_progress("Error datos incompletos.", "red")
+        if not all([nombre, backend_url, self._portada_path_full]):
+            messagebox.showerror("Error", "Faltan datos obligatorios (Nombre, URL Backend, Portada).")
             return False
 
-        # Validar que los archivos de entrada existan
-        if not self.validar_entrada():
-            messagebox.showerror("Error", "Faltan archivos de entrada requeridos o no se encontraron.")
-            self.set_progress("Error validando entrada.", "red")
-            return False
-
-        # Asegurarse de que haya al menos un par imagen-modelo completo para la funcionalidad AR
-        if not any(par['imagen'] and par['modelo'] for par in self.pares):
-            messagebox.showerror("Error", "Agrega al menos un par imagen-modelo completo para la Realidad Aumentada.")
-            self.set_progress("Error: no hay contenido AR completo.", "red")
+        if not self.validar_entrada() or not any(p['imagen'] and p['modelo'] for p in self.pares):
+            messagebox.showerror("Error", "Faltan archivos o no hay pares imagen-modelo completos.")
             return False
 
         safe_log(self.logbox, f"Iniciando creación del paquete: {nombre}")
         paquete_dir = os.path.join(PAQUETES_DIR, nombre)
-
-        # Limpiar carpetas antes de generar (esto asegura la creación de paquete_dir y WWW_DIR)
         limpiar_carpetas(self.logbox, nombre)
 
         try:
-            safe_log(self.logbox, "DEBUG: Paso 1 - Copiando y convirtiendo portada.")
-            # Copiar y convertir la portada a JPG (si es necesario)
-            portada_dest = os.path.join(paquete_dir, "portada.jpg")
-            # Corrección: Usar r-string para la ruta literal y evitar SyntaxWarning
-            safe_log(self.logbox, f"Intentando copiar portada desde '{self._portada_path_full}' a '{portada_dest}'")
+            # 1. Copiar y procesar assets
+            portada_dest_paquete = os.path.join(paquete_dir, "portada.jpg")
             with Image.open(self._portada_path_full) as img:
-                img = img.convert("RGB") # Asegurar formato RGB
-                img.save(portada_dest, "JPEG", quality=95) # Guardar como JPEG
-            time.sleep(0.1) # Pequeña pausa después de guardar imagen
-            if not os.path.exists(portada_dest):
-                raise IOError(f"El archivo de imagen {os.path.basename(self._portada_path_full)} no pudo ser guardado en {portada_dest}.")
-            safe_log(self.logbox, f"✓ Portada copiada a: {portada_dest}")
+                img.convert("RGB").save(portada_dest_paquete, "JPEG", quality=95)
+            
+            # Copiar portada a www para la pantalla de activación
+            shutil.copy2(portada_dest_paquete, os.path.join(WWW_DIR, "portada.jpg"))
+            safe_log(self.logbox, f"✓ Portada copiada a: {portada_dest_paquete} y a www/")
 
-            safe_log(self.logbox, "DEBUG: Paso 2 - Copiando imágenes y modelos, generando marcadores HTML.")
-            # Copiar imágenes y modelos, generar marcadores para el HTML
-            marcadores_data = [] # Lista para almacenar los datos de los marcadores para el HTML
+            marcadores_data = []
+            marcadores_ar_html = ""
             for par in self.pares:
                 if par['imagen'] and par['modelo']:
-                    # Copiar imagen marcador
                     img_dest = os.path.join(paquete_dir, f"{par['base']}.jpg")
                     with Image.open(par['imagen']) as img:
-                        img = img.convert("RGB")
-                        img.save(img_dest, "JPEG", quality=95)
-                    time.sleep(0.1) # Pausa después de guardar imagen
-                    safe_log(self.logbox, f"✓ Imagen marcador copiada: {par['base']}.jpg")
-
-                    # Copiar o convertir modelo a GLB
-                    mod_dst = os.path.join(paquete_dir, f"{par['base']}.glb")
-                    ext = os.path.splitext(par['modelo'])[1].lower()
-                    if ext == ".glb":
-                        shutil.copy2(par['modelo'], mod_dst)
-                        time.sleep(0.1) # Pausa después de copiar
-                    else:
-                        self.convertir_con_blender(par['modelo'], mod_dst)
-                        time.sleep(0.1) # Pausa después de convertir
+                        img.convert("RGB").save(img_dest, "JPEG", quality=95)
                     
-                    if os.path.exists(mod_dst):
-                        marcadores_data.append({
-                            "imagen": f"{par['base']}.jpg", # Nombre del archivo de imagen en el paquete
-                            "modelo": f"{par['base']}.glb"  # Nombre del archivo de modelo en el paquete
-                        })
-                        safe_log(self.logbox, f"✓ Modelo copiado/convertido: {par['base']}.glb")
+                    mod_dest = os.path.join(paquete_dir, f"{par['base']}.glb")
+                    if os.path.splitext(par['modelo'])[1].lower() == ".glb":
+                        shutil.copy2(par['modelo'], mod_dest)
                     else:
-                        safe_log(self.logbox, f"✗ ERROR: No se generó el modelo {par['base']}.glb")
+                        self.convertir_con_blender(par['modelo'], mod_dest)
+                    
+                    shutil.copy2(img_dest, os.path.join(WWW_DIR, f"{par['base']}.jpg"))
+                    shutil.copy2(mod_dest, os.path.join(WWW_DIR, f"{par['base']}.glb"))
+                    
+                    marcadores_ar_html += f"""
+            <a-marker type='pattern' url='{par['base']}.patt' vidhandler>
+                <a-entity gltf-model="url({par['base']}.glb)" scale="0.3 0.3 0.3" animation-mixer></a-entity>
+            </a-marker>"""
+            safe_log(self.logbox, f"✓ Asset procesado y copiado a www: {par['base']}")
 
-            safe_log(self.logbox, "DEBUG: Paso 3 - Generando claves y guardándolas en SQLite.")
-            # Generar claves y guardarlas en SQLite
-            self.claves = [str(uuid.uuid4()).upper().replace("-", "")[:10] for _ in range(cantidad)]
+            # 2. Generar y guardar claves
+            self.claves = [self._generar_codigo_eco() for _ in range(cantidad)]
             insertar_claves_en_backend(self.claves)
             claves_file = os.path.join(OUTPUT_APK_DIR, f"{nombre}_claves.txt")
-            with open(claves_file, "w", encoding="utf-8") as f:
-                f.write("\n".join(self.claves))
-            time.sleep(0.1) # Pausa después de guardar claves
-            safe_log(self.logbox, f"✓ {cantidad} claves generadas en: {claves_file}")
+            with open(claves_file, "w", encoding="utf-8") as f: f.write("\n".join(self.claves))
+            safe_log(self.logbox, f"✓ {cantidad} claves generadas.")
 
-            safe_log(self.logbox, "DEBUG: Paso 4 - Generando HTML de explicación y marcadores AR.")
-            # Generar el contenido HTML para la sección de explicación (si se proporciona)
-            explicacion_html = ""
-            if self.explicacion_var.get().strip():
-                url_exp = self.explicacion_var.get().strip().replace("'", "\\'")
-                explicacion_html = f'<button class="boton explicacion" onclick="window.open(\'{url_exp}\', \'_blank\')">💡 Explicación</button>'
+            # 3. Generar y guardar los 3 archivos HTML
+            activation_html = self.generate_activation_html(nombre, backend_url)
+            main_menu_html = self.generate_main_menu_html(nombre)
+            ar_viewer_html = self.generate_ar_viewer_html(nombre, marcadores_ar_html)
 
-            # Generar el contenido HTML para los marcadores AR
-            marcadores_ar_html = ""
-            for idx, marcador in enumerate(marcadores_data):
-                # CORRECCIÓN CLAVE AQUÍ: Eliminar el '$' de las URLs en el f-string de Python.
-                # El '$' es para template literals de JavaScript, no para f-strings de Python.
-                # Al eliminarlo, Python insertará directamente el valor de la variable.
-                marcadores_ar_html += f"""
-            <a-marker markerhandler id="marker-{idx}" type="pattern" url="{marcador['imagen']}" preset="custom">
-                <a-entity gltf-model="url({marcador['modelo']})" scale="0.3 0.3 0.3"
-                          animation="property: rotation; to: 0 360 0; loop: true; dur: 6000;"></a-entity>
-            </a-marker>
-"""
-            safe_log(self.logbox, "DEBUG: Paso 5 - Cargando y sustituyendo plantilla HTML.")
-            # --- INICIO DE CAMBIO CRÍTICO: CARGAR HTML DESDE ARCHIVO Y USAR TEMPLATE ---
-            # Asegurarse de que el archivo de plantilla HTML exista
-            if not os.path.exists(HTML_TEMPLATE_PATH):
-                raise FileNotFoundError(f"No se encontró el archivo de plantilla HTML: {HTML_TEMPLATE_PATH}")
+            for filename, content in [("index.html", activation_html), ("main-menu.html", main_menu_html), ("ar-viewer.html", ar_viewer_html)]:
+                with open(os.path.join(WWW_DIR, filename), "w", encoding="utf-8") as f:
+                    f.write(content)
+                with open(os.path.join(paquete_dir, filename), "w", encoding="utf-8") as f:
+                    f.write(content)
+                safe_log(self.logbox, f"✓ Archivo HTML generado y guardado: {filename}")
 
-            with open(HTML_TEMPLATE_PATH, "r", encoding="utf-8") as f:
-                contenido_html_template = Template(f.read()) # Usar Template
-
-            # Reemplazar marcadores de posición en la plantilla usando safe_substitute
-            # Se usa safe_substitute para manejar variables que puedan no estar presentes
-            contenido_html = contenido_html_template.safe_substitute(
-                APP_NAME=nombre,
-                BACKEND_URL=backend_url,
-                PROPAGANDA_BUTTON=f'<button class="boton propaganda" onclick="window.open(\'{self.propaganda_var.get().strip()}\', \'_blank\')">📢 Video/Promocional</button>',
-                EXPLANATION_BUTTON=explicacion_html,
-                AR_MARKERS_HTML=marcadores_ar_html,
-                # Añadir variables que puedan estar en index_template.html pero no se generen aquí
-                # safe_substitute las dejará intactas si no se proporcionan
-                capacitorRetries=3, # Valor por defecto o placeholder
-                capacitorTimeout=5000, # Valor por defecto o placeholder
-                capacitorVersion="5.0.0" # Valor por defecto o placeholder
-            )
-            safe_log(self.logbox, "DEBUG: Paso 6 - Escribiendo y copiando index.html a WWW_DIR.")
-            # El resto del código para guardar y copiar el HTML permanece igual
-            index_path = os.path.join(paquete_dir, "index.html")
-            with open(index_path, "w", encoding="utf-8") as f:
-                f.write(contenido_html)
-            time.sleep(0.1) # Pausa después de guardar index.html
-            safe_log(self.logbox, f"✓ index.html generado en: {index_path}")
-
-            # Copiar index.html y assets a la carpeta 'www' del proyecto Capacitor
-            www_index_path = os.path.join(WWW_DIR, "index.html")
-            shutil.copy2(index_path, www_index_path)
-            time.sleep(0.1) # Pausa después de copiar index.html a www
-            if not os.path.exists(www_index_path):
-                raise FileNotFoundError(f"No se pudo copiar index.html a {www_index_path}")
-            safe_log(self.logbox, f"✓ index.html copiado a: {www_index_path}")
-
-            safe_log(self.logbox, "DEBUG: Paso 7 - Copiando marcadores y modelos a www.")
-            # Copiar marcadores y modelos a www con sobrescritura
-            for par in self.pares:
-                if par['imagen'] and par['modelo']:
-                    # Copiar imagen a www
-                    shutil.copy2(par['imagen'], os.path.join(WWW_DIR, f"{par['base']}.jpg"))
-                    time.sleep(0.1) # Pausa después de copiar imagen a www
-                    safe_log(self.logbox, f"✓ Marcador copiado a www: {par['base']}.jpg")
-
-                    # Copiar modelo (ya convertido a GLB) a www
-                    final_model_path_in_package = os.path.join(paquete_dir, f"{par['base']}.glb")
-                    if os.path.exists(final_model_path_in_package):
-                        shutil.copy2(final_model_path_in_package, os.path.join(WWW_DIR, f"{par['base']}.glb"))
-                        time.sleep(0.1) # Pausa después de copiar modelo a www
-                        safe_log(self.logbox, f"✓ Modelo copiado a www: {par['base']}.glb")
-                    else:
-                        safe_log(self.logbox, f"✗ ERROR: No se encontró el modelo {par['base']}.glb para copiar a www.")
-
-            safe_log(self.logbox, "DEBUG: Paso 8 - Actualizando capacitor.config.json. Se usará un esquema HTTP para evitar problemas de Mixed Content en desarrollo.")
-            # Actualizar capacitor.config.json con el nuevo appId y appName
-            config_path = os.path.join(PROJECT_DIR, "capacitor.config.json") # Apunta al proyecto de trabajo
-            config = {
-                "appId": f"com.libros3dar.{nombre}", # Usa el nombre limpio para el appId
-                "appName": nombre, # Usa el nombre limpio para el appName
-                "webDir": "www",
-                "bundledWebRuntime": False,
-                "plugins": {
-                    "SplashScreen": {"launchShowDuration": 0},
-                    "Camera": {"androidCameraPermission": True}
-                },
-                "server": { # Agregado para el androidScheme
-                    "androidScheme": "http", # CAMBIO CRÍTICO: Usar HTTP para evitar problemas de Mixed Content en debug
-                    "cleartext": True
-                },
-                "android": { # AÑADIDO: Para permitir mixed content
-                    "allowMixedContent": True
-                },
-                "cordova": {}
-            }
+            # 4. Actualizar config de Capacitor
+            config_path = os.path.join(PROJECT_DIR, "capacitor.config.json")
             with open(config_path, "w", encoding="utf-8") as f:
-                json.dump(config, f, indent=4)
-            time.sleep(0.1) # Pausa después de guardar config
-            safe_log(self.logbox, f"✓ capacitor.config.json actualizado con appId: com.libros3dar.{nombre}")
+                json.dump({
+                    "appId": f"com.libros3dar.{nombre}", "appName": nombre, "webDir": "www",
+                    "server": {"androidScheme": "https"},
+                    "plugins": {"SplashScreen": {"launchShowDuration": 0}}
+                }, f, indent=4)
+            safe_log(self.logbox, f"✓ capacitor.config.json actualizado.")
 
-            safe_log(self.logbox, "DEBUG: Paso 9 - Actualizando strings.xml.")
-            # Actualizar strings.xml con el nuevo nombre de la aplicación
-            update_strings_xml(self.logbox, nombre) # Se pasa logbox aquí
-            time.sleep(0.1) # Pausa después de actualizar strings.xml
-            safe_log(self.logbox, "DEBUG: Paso 10 - Finalizando generación de paquete.")
-
+            update_strings_xml(self.logbox, nombre)
             self.set_progress("Paquete generado.", "green")
             return True
 
@@ -1043,6 +843,300 @@ class GeneradorGUI:
             self.set_progress("Error generando paquete.", "red")
             safe_log(self.logbox, f"✗ ERROR generando paquete: {e}")
             return False
+
+    def generar_backend_local(self):
+        """
+        Genera un archivo `backend_activacion.py` con un servidor Flask de prueba
+        en el directorio de salida de APKs.
+        """
+        safe_log(self.logbox, "Generando servidor de backend de prueba...")
+        backend_code = f"""
+import sqlite3
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+from datetime import datetime
+
+# --- CONFIGURACIÓN ---
+DATABASE = r'{BACKEND_DB}'
+app = Flask(__name__)
+# Permitir CORS para todas las rutas, crucial para peticiones desde http/https localhost
+CORS(app)
+
+def get_db():
+    db = sqlite3.connect(DATABASE)
+    db.row_factory = sqlite3.Row
+    return db
+
+@app.route('/activar', methods=['POST'])
+def activar_codigo():
+    if not request.is_json:
+        return jsonify({{"valid": False, "error": "Content-Type debe ser application/json"}}), 400
+
+    data = request.get_json()
+    token = data.get('token')
+    device_id = data.get('device_id')
+
+    if not token or not device_id:
+        return jsonify({{"valid": False, "error": "Faltan 'token' o 'device_id' en la petición"}}), 400
+
+    db = get_db()
+    cursor = db.cursor()
+
+    # 1. Buscar el token
+    cursor.execute("SELECT * FROM activaciones WHERE token = ?", (token,))
+    activacion = cursor.fetchone()
+
+    if not activacion:
+        db.close()
+        return jsonify({{"valid": False, "error": "Código inválido."}}), 200
+
+    # 2. Lógica de activación/reutilización
+    db_device_id = activacion['device_id']
+
+    # Caso A: El código nunca ha sido usado (device_id está vacío)
+    if not db_device_id:
+        cursor.execute(
+            "UPDATE activaciones SET device_id = ?, usado = 1, fecha_uso = ? WHERE token = ?",
+            (device_id, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), token)
+        )
+        db.commit()
+        db.close()
+        return jsonify({{"valid": True, "message": "Código activado por primera vez."}}), 200
+
+    # Caso B: El código ya fue usado, verificar si es el mismo dispositivo
+    elif db_device_id == device_id:
+        db.close()
+        return jsonify({{"valid": True, "message": "Código ya validado para este dispositivo."}}), 200
+
+    # Caso C: El código ya fue usado en OTRO dispositivo
+    else:
+        db.close()
+        return jsonify({{"valid": False, "error": "Este código ya ha sido utilizado en otro dispositivo."}}), 200
+
+if __name__ == '__main__':
+    print("Iniciando servidor Flask de prueba para activaciones.")
+    print(f"Usando base de datos: {{DATABASE}}")
+    print("Para detener el servidor, presiona CTRL+C")
+    # Ejecutar en HTTP para no requerir certificados en pruebas locales
+    app.run(host='0.0.0.0', port=5000, debug=True, use_reloader=False)
+"""
+        backend_file_path = os.path.join(OUTPUT_APK_DIR, "backend_activacion.py")
+        try:
+            with open(backend_file_path, "w", encoding="utf-8") as f:
+                f.write(backend_code)
+            safe_log(self.logbox, f"✓ Backend de prueba generado en: {backend_file_path}")
+            messagebox.showinfo("Backend Generado", f"Se ha creado el archivo 'backend_activacion.py' en la carpeta de salida. Puedes ejecutarlo con 'python backend_activacion.py' para probar la activación localmente.")
+        except Exception as e:
+            safe_log(self.logbox, f"✗ ERROR al generar el backend de prueba: {e}")
+            messagebox.showerror("Error", f"No se pudo generar el backend de prueba: {e}")
+
+    def generate_activation_html(self, nombre, backend_url):
+        return f"""
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Activación - {nombre}</title>
+    <script src="capacitor.js"></script>
+    <style>
+        body {{ font-family: Arial, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }}
+        .activation-container {{ background: white; padding: 2rem; border-radius: 15px; box-shadow: 0 10px 30px rgba(0,0,0,0.2); text-align: center; max-width: 400px; width: 90%; }}
+        .logo {{ width: 100px; height: 100px; margin: 0 auto 1rem; background: url('portada.jpg') center/cover; border-radius: 50%; }}
+        input[type="text"] {{ width: 100%; padding: 1rem; border: 2px solid #ddd; border-radius: 8px; font-size: 1.1rem; margin: 1rem 0; box-sizing: border-box; }}
+        .activate-btn {{ width: 100%; padding: 1rem; background: #4CAF50; color: white; border: none; border-radius: 8px; font-size: 1.1rem; cursor: pointer; transition: background 0.3s; }}
+        .activate-btn:hover {{ background: #45a049; }}
+        .error {{ color: #f44336; margin-top: 1rem; }} .success {{ color: #4CAF50; margin-top: 1rem; }}
+    </style>
+</head>
+<body>
+    <div class="activation-container">
+        <div class="logo"></div>
+        <h1>Activación Requerida</h1>
+        <p>Ingresa tu código de activación para acceder al contenido AR</p>
+        <input type="text" id="activationCode" placeholder="Ingresa código de activación" maxlength="19">
+        <button class="activate-btn" onclick="validateCode()">Activar</button>
+        <div id="message"></div>
+    </div>
+    <script>
+        function generateSimpleHash(str) {{
+            let hash = 0;
+            for (let i = 0; i < str.length; i++) {{
+                const char = str.charCodeAt(i);
+                hash = (hash << 5) - hash + char;
+                hash |= 0; // Convert to 32bit integer
+            }}
+            return 'dev-' + Math.abs(hash).toString(16);
+        }}
+
+        async function getOrCreateDeviceId() {{
+            let deviceId = localStorage.getItem('device_id');
+            if (!deviceId) {{
+                try {{
+                    // Usar Capacitor Device plugin si está disponible para un ID más robusto
+                    const {{ Device }} = Capacitor.Plugins;
+                    const info = await Device.getId();
+                    deviceId = info.uuid;
+                }} catch (e) {{
+                    // Fallback para web o si el plugin falla
+                    console.warn('Capacitor Device plugin not available. Using browser-based fingerprint.');
+                    const deviceInfo = navigator.userAgent + navigator.language + screen.width + screen.height;
+                    deviceId = generateSimpleHash(deviceInfo);
+                }}
+                localStorage.setItem('device_id', deviceId);
+            }}
+            return deviceId;
+        }}
+        
+        // Redirigir si ya está activado
+        if (localStorage.getItem('app_activated') === 'true') {{
+            window.location.href = 'main-menu.html';
+        }}
+
+        async function validateCode() {{
+            const code = document.getElementById('activationCode').value.trim();
+            const messageDiv = document.getElementById('message');
+            messageDiv.innerHTML = 'Validando...';
+
+            if (!code) {{
+                messageDiv.innerHTML = '<p class="error">Por favor ingresa un código</p>';
+                return;
+            }}
+
+            try {{
+                const deviceId = await getOrCreateDeviceId();
+                const payload = {{ token: code, device_id: deviceId }};
+                let result;
+
+                if (window.Capacitor && Capacitor.isNativePlatform()) {{
+                    const {{ CapacitorHttp }} = Capacitor.Plugins;
+                    const response = await CapacitorHttp.request({{
+                        url: '{backend_url}',
+                        method: 'POST',
+                        headers: {{ 'Content-Type': 'application/json', 'Accept': 'application/json' }},
+                        data: payload
+                    }});
+                    result = response.data;
+                }} else {{
+                    console.log("Ejecutando en web, usando fetch.");
+                    const response = await fetch('{backend_url}', {{
+                        method: 'POST',
+                        headers: {{ 'Content-Type': 'application/json' }},
+                        body: JSON.stringify(payload)
+                    }});
+                    if (!response.ok) {{
+                       throw new Error(`HTTP error! status: ${{response.status}}`);
+                    }}
+                    result = await response.json();
+                }}
+
+                if (result.valid) {{
+                    messageDiv.innerHTML = '<p class="success">¡Código válido! Redirigiendo...</p>';
+                    localStorage.setItem('app_activated', 'true');
+                    localStorage.setItem('activation_code', code);
+                    setTimeout(() => {{ window.location.href = 'main-menu.html'; }}, 1500);
+                }} else {{
+                    messageDiv.innerHTML = `<p class="error">${{result.error || 'Código inválido o ya utilizado.'}}</p>`;
+                }}
+
+            }} catch (error) {{
+                messageDiv.innerHTML = '<p class="error">Error de conexión. Verifica tu internet y la URL del servidor.</p>';
+                console.error('Error de activación:', error);
+            }}
+        }}
+    </script>
+</body>
+</html>"""
+
+    def generate_main_menu_html(self, nombre):
+        explicacion_btn_html = f'<button class="menu-btn explanation-btn" onclick="openExplanation()">💡 Explicación</button>' if self.explicacion_var.get().strip() else ''
+        open_explanation_js = f"function openExplanation() {{ window.open('{self.explicacion_var.get().strip()}', '_blank'); }}" if self.explicacion_var.get().strip() else 'function openExplanation() {}'
+        return f"""
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8"> <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{nombre} - Menú Principal</title>
+    <style>
+        body {{ font-family: Arial, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); margin: 0; padding: 2rem; }}
+        .menu-container {{ max-width: 600px; margin: 0 auto; background: white; border-radius: 15px; padding: 2rem; box-shadow: 0 10px 30px rgba(0,0,0,0.2); }}
+        .menu-btn {{ width: 100%; padding: 1.5rem; margin: 1rem 0; border: none; border-radius: 10px; font-size: 1.2rem; cursor: pointer; transition: transform 0.3s, box-shadow 0.3s; }}
+        .menu-btn:hover {{ transform: translateY(-2px); box-shadow: 0 5px 15px rgba(0,0,0,0.2); }}
+        .video-btn {{ background: #2196F3; color: white; }} .explanation-btn {{ background: #FF9800; color: white; }}
+        .ar-btn {{ background: linear-gradient(45deg, #4CAF50, #45a049); color: white; font-weight: bold; font-size: 1.4rem; }}
+    </style>
+</head>
+<body>
+    <div class="menu-container">
+        <h1 style="text-align: center; color: #333;">Bienvenido a {nombre}</h1>
+        <button class="menu-btn video-btn" onclick="openVideo()">📢 Ver Video Promocional</button>
+        {explicacion_btn_html}
+        <button class="menu-btn ar-btn" onclick="startAR()">📱 Iniciar Realidad Aumentada</button>
+    </div>
+    <script>
+        function openVideo() {{ window.open('{self.propaganda_var.get().strip()}', '_blank'); }}
+        {open_explanation_js}
+        function startAR() {{
+            if (localStorage.getItem('app_activated') !== 'true') {{
+                alert('Sesión expirada. Redirigiendo a activación...');
+                window.location.href = 'index.html';
+                return;
+            }}
+            window.location.href = 'ar-viewer.html';
+        }}
+    </script>
+</body>
+</html>"""
+
+    def generate_ar_viewer_html(self, nombre, marcadores_ar_html):
+        return f"""
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8"> <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Realidad Aumentada - {nombre}</title>
+    <script src="https://aframe.io/releases/1.4.0/aframe.min.js"></script>
+    <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar-nft.js"></script>
+    <style>
+        body {{ margin: 0; overflow: hidden; }}
+        .ar-overlay {{ position: fixed; top: 20px; left: 20px; right: 20px; background: rgba(0,0,0,0.8); color: white; padding: 1rem; border-radius: 10px; font-family: Arial, sans-serif; z-index: 1000; }}
+        .back-btn {{ position: fixed; top: 20px; right: 20px; background: #f44336; color: white; border: none; padding: 1rem; border-radius: 50px; cursor: pointer; z-index: 1001; font-size: 1.2rem; }}
+    </style>
+</head>
+<body>
+    <div class="ar-overlay">
+        <h3>📱 Realidad Aumentada Activa</h3>
+        <p>Apunta la cámara hacia las imágenes marcadoras para ver los modelos 3D</p>
+    </div>
+    <button class="back-btn" onclick="goBack()">← Volver</button>
+    <a-scene embedded arjs="sourceType: webcam; trackingMethod: best; debugUIEnabled: false; detectionMode: mono_and_matrix; matrixCodeType: 3x3;" vr-mode-ui="enabled: false;">
+        <a-camera gps-camera rotation-reader></a-camera>
+        {marcadores_ar_html}
+    </a-scene>
+    <script>
+        function goBack() {{ window.location.href = 'main-menu.html'; }}
+        if (localStorage.getItem('app_activated') !== 'true') {{
+            alert('Acceso no autorizado. Redirigiendo...');
+            window.location.href = 'index.html';
+        }}
+        document.addEventListener('DOMContentLoaded', function() {{
+            const markers = document.querySelectorAll('a-marker');
+            markers.forEach(marker => {{
+                marker.addEventListener('markerFound', function() {{
+                    console.log('Marcador detectado:', marker.id);
+                    document.querySelector('.ar-overlay').style.background = 'rgba(76, 175, 80, 0.8)';
+                    document.querySelector('.ar-overlay h3').textContent = '✅ Marcador Detectado';
+                }});
+                marker.addEventListener('markerLost', function() {{
+                    console.log('Marcador perdido:', marker.id);
+                    document.querySelector('.ar-overlay').style.background = 'rgba(0,0,0,0.8)';
+                    document.querySelector('.ar-overlay h3').textContent = '📱 Buscando Marcadores...';
+                }});
+            }});
+        }});
+    </script>
+</body>
+</html>"""
 
     def convertir_con_blender(self, origen, destino):
         """
@@ -1234,10 +1328,15 @@ bpy.ops.export_scene.gltf(filepath=r'{destino}', export_format='GLB', export_app
             return
         
         self.set_progress(f"Iniciando compilación del APK para '{nombre}'...")
-        # Iniciar la compilación en un hilo separado para no congelar la GUI
-        threading.Thread(target=self.build_flow_thread, args=(nombre, PROJECT_DIR, ANDROID_DIR), daemon=True).start()
+        
+        # Automatizar la generación del backend de prueba
+        self.generar_backend_local()
 
-    def build_flow_thread(self, nombre, project_dir_arg, android_dir_arg):
+        # Iniciar la compilación en un hilo separado para no congelar la GUI
+        final_apk_dest_dir = os.path.join(OUTPUT_APK_DIR, nombre)
+        threading.Thread(target=self.build_flow_thread, args=(nombre, PROJECT_DIR, ANDROID_DIR, final_apk_dest_dir), daemon=True).start()
+
+    def build_flow_thread(self, nombre, project_dir_arg, android_dir_arg, final_apk_dest_dir):
         """
         Hilo principal que coordina la instalación de plugins, la sincronización de Capacitor y la compilación de Gradle.
         """
@@ -1278,8 +1377,8 @@ bpy.ops.export_scene.gltf(filepath=r'{destino}', export_format='GLB', export_app
                 messagebox.showerror("Error inesperado", f"Ocurrió un error inesperado al instalar el plugin: {e}")
                 return
 
-            # Paso 1: Ejecutar npx cap sync android
-            if not ejecutar_cap_sync(self.logbox, project_dir_arg):
+            # Paso 1: Ejecutar npx cap update, sync y copy
+            if not ejecutar_cap_sync(self.logbox, project_dir_arg, update=True): # Pasa update=True
                 self.set_progress("✗ Sincronización Capacitor fallida.", "red")
                 safe_log(self.logbox, "======== BUILD APK FALLIDO (SYNC) ========")
                 return
@@ -1305,18 +1404,24 @@ bpy.ops.export_scene.gltf(filepath=r'{destino}', export_format='GLB', export_app
                     break
 
             if apk_file and os.path.exists(apk_file):
-                final_apk_dest_dir = os.path.join(OUTPUT_APK_DIR, nombre)
                 os.makedirs(final_apk_dest_dir, exist_ok=True)
                 final_apk_path = os.path.join(final_apk_dest_dir, f"{nombre}-debug.apk")
                 shutil.copy2(apk_file, final_apk_path)
                 safe_log(self.logbox, f"✓ APK copiado a: {final_apk_path}")
 
-                claves_str = ",".join(self.claves) if self.claves else ""
+                claves_str = "\n".join(self.claves) if self.claves else ""
                 if claves_str:
                     clave_file = os.path.join(final_apk_dest_dir, "claves-activacion.txt")
                     with open(clave_file, "w", encoding="utf-8") as f:
                         f.write(claves_str)
-                    safe_log(self.logbox, f"✓ Archivo de claves creado en {clave_file}")
+                    safe_log(self.logbox, f"✓ Archivo de claves creado en: {clave_file}")
+                
+                # Mover el backend también a la carpeta final
+                backend_source_path = os.path.join(OUTPUT_APK_DIR, "backend_activacion.py")
+                if os.path.exists(backend_source_path):
+                    shutil.move(backend_source_path, os.path.join(final_apk_dest_dir, "backend_activacion.py"))
+                    safe_log(self.logbox, f"✓ Backend de prueba movido a la carpeta del paquete.")
+
 
                 self.set_progress("✅ ¡APK generado y build terminado!", "green")
                 safe_log(self.logbox, "======== BUILD APK COMPLETADO ========")
