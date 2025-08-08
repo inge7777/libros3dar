@@ -9,7 +9,8 @@ import sqlite3
 from datetime import datetime
 import threading
 import time # Importar el módulo time
-from tkinter import Tk, Frame, Label, Entry, Button, Listbox, Scrollbar, Text, StringVar, filedialog, messagebox, END, LEFT, RIGHT, BOTH, Y, VERTICAL, NORMAL, DISABLED
+import requests # Importar requests
+from tkinter import Tk, Frame, Label, Entry, Button, Listbox, Scrollbar, Text, StringVar, filedialog, messagebox, END, LEFT, RIGHT, BOTH, Y, VERTICAL, NORMAL, DISABLED, Toplevel
 from PIL import Image, ImageOps, ImageDraw # Importar ImageOps y ImageDraw
 from string import Template # Importar Template para el manejo de plantillas HTML
 
@@ -38,7 +39,7 @@ WWW_DIR = os.path.join(PROJECT_DIR, "www") # Directorio web del proyecto Capacit
 LOGS_DIR = os.path.join(OUTPUT_APK_DIR, "logs")
 STRINGS_XML = os.path.join(ANDROID_DIR, "app", "src", "main", "res", "values", "strings.xml")
 # Base de datos para las claves de activación del backend
-BACKEND_DB = os.path.join(BASE_DIR, "BACKEND", "activaciones.db")
+BACKEND_DB = os.path.join(BASE_DIR, "backend", "activaciones.db")
 # Script de PowerShell para la compilación del APK (se mantiene para referencia, aunque ahora se usa Gradle directo)
 PS_SCRIPT = os.path.join(GEN_DIR, "generador_apk.ps1")
 
@@ -150,12 +151,11 @@ def verificar_entorno(logbox) -> bool:
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS activaciones (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                token TEXT NOT NULL,
-                device_id TEXT DEFAULT '',
-                fecha TEXT NOT NULL,
+                token TEXT NOT NULL UNIQUE,
+                device_id TEXT,
+                fecha_creacion TEXT NOT NULL,
                 usado INTEGER DEFAULT 0,
-                fecha_uso TEXT DEFAULT NULL,
-                UNIQUE(token, device_id)
+                fecha_uso TEXT
             )
         """)
         conn.commit()
@@ -173,21 +173,29 @@ def verificar_entorno(logbox) -> bool:
         safe_log(logbox, "✓ capacitor.config.json encontrado.")
     return ok
 
-def insertar_claves_en_backend(claves: list):
+def insertar_claves_en_backend(logbox, claves: list):
     """
     Agrega las claves de activación generadas a la tabla 'activaciones'.
     """
+    safe_log(logbox, f"Iniciando inserción de {len(claves)} claves en la base de datos...")
     try:
         conn = sqlite3.connect(BACKEND_DB)
         cursor = conn.cursor()
         fecha = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        inserted_count = 0
         for clave in claves:
             # Inserta solo el token y la fecha. El device_id se asociará en el primer uso.
-            cursor.execute("INSERT OR IGNORE INTO activaciones (token, fecha) VALUES (?, ?)",
-                          (clave, fecha))
+            try:
+                cursor.execute("INSERT INTO activaciones (token, fecha_creacion) VALUES (?, ?)",
+                              (clave, fecha))
+                inserted_count += 1
+            except sqlite3.IntegrityError:
+                safe_log(logbox, f"  - La clave {clave} ya existe en la base de datos. Se omite.")
         conn.commit()
         conn.close()
+        safe_log(logbox, f"✓ Inserción completada. {inserted_count} nuevas claves añadidas a la base de datos.")
     except Exception as e:
+        safe_log(logbox, f"✗ ERROR CRÍTICO insertando claves en SQLite: {e}")
         raise Exception(f"Error insertando claves en SQLite: {e}")
 
 def corregir_android_manifest(logbox, nombre_paquete_limpio):
@@ -612,6 +620,11 @@ class GeneradorGUI:
                command=self.generar_paquete, width=18, height=2).pack(pady=5)
         Button(acciones_frame, text="Generar APK", bg="#007bff", fg="white",
                command=self.generar_apk, width=18, height=2).pack(pady=5)
+
+        Label(acciones_frame, text="9. Verificación:", font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(20, 10))
+        Button(acciones_frame, text="Verificar Conexión", command=self.verify_backend_connection, width=18).pack(pady=5)
+        Button(acciones_frame, text="Ver Claves en BD", command=self.view_activation_keys, width=18).pack(pady=5)
+
         Button(acciones_frame, text="Limpiar Formulario", fg="black",
                command=self.limpiar_todo, width=18).pack(pady=20)
 
@@ -807,7 +820,7 @@ class GeneradorGUI:
 
             # 2. Generar y guardar claves
             self.claves = [self._generar_codigo_eco() for _ in range(cantidad)]
-            insertar_claves_en_backend(self.claves)
+            insertar_claves_en_backend(self.logbox, self.claves)
             claves_file = os.path.join(OUTPUT_APK_DIR, f"{nombre}_claves.txt")
             with open(claves_file, "w", encoding="utf-8") as f: f.write("\n".join(self.claves))
             safe_log(self.logbox, f"✓ {cantidad} claves generadas.")
@@ -844,93 +857,73 @@ class GeneradorGUI:
             safe_log(self.logbox, f"✗ ERROR generando paquete: {e}")
             return False
 
-    def generar_backend_local(self):
-        """
-        Genera un archivo `backend_activacion.py` con un servidor Flask de prueba
-        en el directorio de salida de APKs.
-        """
-        safe_log(self.logbox, "Generando servidor de backend de prueba...")
-        backend_code = f"""
-import sqlite3
-from flask import Flask, request, jsonify
-from flask_cors import CORS
-from datetime import datetime
+    def verify_backend_connection(self):
+        """Verifica la conexión con el servidor backend."""
+        backend_url = self.backend_url.get().strip()
+        if not backend_url:
+            messagebox.showerror("Error", "La URL del Backend está vacía.")
+            return
 
-# --- CONFIGURACIÓN ---
-DATABASE = r'{BACKEND_DB}'
-app = Flask(__name__)
-# Permitir CORS para todas las rutas, crucial para peticiones desde http/https localhost
-CORS(app)
+        # Use the root of the URL for the health check
+        base_url = re.match(r'https?://[^/]+', backend_url).group(0)
 
-def get_db():
-    db = sqlite3.connect(DATABASE)
-    db.row_factory = sqlite3.Row
-    return db
-
-@app.route('/activar', methods=['POST'])
-def activar_codigo():
-    if not request.is_json:
-        return jsonify({{"valid": False, "error": "Content-Type debe ser application/json"}}), 400
-
-    data = request.get_json()
-    token = data.get('token')
-    device_id = data.get('device_id')
-
-    if not token or not device_id:
-        return jsonify({{"valid": False, "error": "Faltan 'token' o 'device_id' en la petición"}}), 400
-
-    db = get_db()
-    cursor = db.cursor()
-
-    # 1. Buscar el token
-    cursor.execute("SELECT * FROM activaciones WHERE token = ?", (token,))
-    activacion = cursor.fetchone()
-
-    if not activacion:
-        db.close()
-        return jsonify({{"valid": False, "error": "Código inválido."}}), 200
-
-    # 2. Lógica de activación/reutilización
-    db_device_id = activacion['device_id']
-
-    # Caso A: El código nunca ha sido usado (device_id está vacío)
-    if not db_device_id:
-        cursor.execute(
-            "UPDATE activaciones SET device_id = ?, usado = 1, fecha_uso = ? WHERE token = ?",
-            (device_id, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), token)
-        )
-        db.commit()
-        db.close()
-        return jsonify({{"valid": True, "message": "Código activado por primera vez."}}), 200
-
-    # Caso B: El código ya fue usado, verificar si es el mismo dispositivo
-    elif db_device_id == device_id:
-        db.close()
-        return jsonify({{"valid": True, "message": "Código ya validado para este dispositivo."}}), 200
-
-    # Caso C: El código ya fue usado en OTRO dispositivo
-    else:
-        db.close()
-        return jsonify({{"valid": False, "error": "Este código ya ha sido utilizado en otro dispositivo."}}), 200
-
-if __name__ == '__main__':
-    print("Iniciando servidor Flask de prueba para activaciones.")
-    print(f"Usando base de datos: {{DATABASE}}")
-    print("Para detener el servidor, presiona CTRL+C")
-    # Ejecutar en HTTP para no requerir certificados en pruebas locales
-    app.run(host='0.0.0.0', port=5000, debug=True, use_reloader=False)
-"""
-        backend_file_path = os.path.join(OUTPUT_APK_DIR, "backend_activacion.py")
+        self.set_progress(f"Verificando conexión con {base_url}...")
+        safe_log(self.logbox, f"Verificando conexión con {base_url}...")
         try:
-            with open(backend_file_path, "w", encoding="utf-8") as f:
-                f.write(backend_code)
-            safe_log(self.logbox, f"✓ Backend de prueba generado en: {backend_file_path}")
-            messagebox.showinfo("Backend Generado", f"Se ha creado el archivo 'backend_activacion.py' en la carpeta de salida. Puedes ejecutarlo con 'python backend_activacion.py' para probar la activación localmente.")
-        except Exception as e:
-            safe_log(self.logbox, f"✗ ERROR al generar el backend de prueba: {e}")
-            messagebox.showerror("Error", f"No se pudo generar el backend de prueba: {e}")
+            # We don't want to verify SSL cert for ngrok free tier, as it can be tricky.
+            # For a production app, you'd want to handle this properly.
+            response = requests.get(base_url, timeout=10, verify=False)
+            if response.status_code == 200:
+                messagebox.showinfo("Éxito", f"Conexión exitosa con el backend en {base_url}.\nRespuesta: {response.text}")
+                self.set_progress("Conexión con backend exitosa.", "green")
+            else:
+                messagebox.showerror("Error", f"El backend respondió con un código de estado inesperado: {response.status_code}\n{response.text}")
+                self.set_progress("Fallo en la conexión con backend.", "red")
+        except requests.exceptions.RequestException as e:
+            messagebox.showerror("Error de Conexión", f"No se pudo conectar al backend en {base_url}.\nAsegúrate de que el servidor esté corriendo y la URL sea correcta.\n\nError: {e}")
+            self.set_progress("Fallo en la conexión con backend.", "red")
+
+    def view_activation_keys(self):
+        """Muestra las claves de activación desde el backend."""
+        backend_url = self.backend_url.get().strip()
+        if not backend_url:
+            messagebox.showerror("Error", "La URL del Backend está vacía.")
+            return
+        
+        # Construct the /keys endpoint URL
+        base_url = re.match(r'https?://[^/]+', backend_url).group(0)
+        keys_url = f"{base_url}/keys"
+
+        self.set_progress("Obteniendo claves desde el backend...")
+        safe_log(self.logbox, f"Obteniendo claves desde {keys_url}...")
+        try:
+            response = requests.get(keys_url, timeout=10, verify=False)
+            if response.status_code == 200:
+                keys = response.json()
+                # Display keys in a new window
+                top = Toplevel(self.root)
+                top.title("Claves de Activación en la Base de Datos")
+                top.geometry("600x400")
+                text = Text(top, wrap="word")
+                text.pack(expand=True, fill=BOTH)
+                text.insert(END, json.dumps(keys, indent=4))
+                self.set_progress("Claves obtenidas exitosamente.")
+            else:
+                messagebox.showerror("Error", f"El backend respondió con un código de estado inesperado: {response.status_code}\n{response.text}")
+                self.set_progress("Fallo al obtener claves.", "red")
+        except requests.exceptions.RequestException as e:
+            messagebox.showerror("Error de Conexión", f"No se pudo conectar al backend en {keys_url}.\nError: {e}")
+            self.set_progress("Fallo al obtener claves.", "red")
 
     def generate_activation_html(self, nombre, backend_url):
+        # Asegurarse de que la URL termine con /activar
+        activation_url = backend_url.strip()
+        if not activation_url.endswith('/activar'):
+            if activation_url.endswith('/'):
+                activation_url += 'activar'
+            else:
+                activation_url += '/activar'
+        
         return f"""
 <!DOCTYPE html>
 <html lang="es">
@@ -1011,7 +1004,7 @@ if __name__ == '__main__':
                 if (window.Capacitor && Capacitor.isNativePlatform()) {{
                     const {{ CapacitorHttp }} = Capacitor.Plugins;
                     const response = await CapacitorHttp.request({{
-                        url: '{backend_url}',
+                        url: '{activation_url}',
                         method: 'POST',
                         headers: {{ 'Content-Type': 'application/json', 'Accept': 'application/json' }},
                         data: payload
@@ -1019,7 +1012,7 @@ if __name__ == '__main__':
                     result = response.data;
                 }} else {{
                     console.log("Ejecutando en web, usando fetch.");
-                    const response = await fetch('{backend_url}', {{
+                    const response = await fetch('{activation_url}', {{
                         method: 'POST',
                         headers: {{ 'Content-Type': 'application/json' }},
                         body: JSON.stringify(payload)
@@ -1329,9 +1322,6 @@ bpy.ops.export_scene.gltf(filepath=r'{destino}', export_format='GLB', export_app
         
         self.set_progress(f"Iniciando compilación del APK para '{nombre}'...")
         
-        # Automatizar la generación del backend de prueba
-        self.generar_backend_local()
-
         # Iniciar la compilación en un hilo separado para no congelar la GUI
         final_apk_dest_dir = os.path.join(OUTPUT_APK_DIR, nombre)
         threading.Thread(target=self.build_flow_thread, args=(nombre, PROJECT_DIR, ANDROID_DIR, final_apk_dest_dir), daemon=True).start()
@@ -1518,7 +1508,7 @@ bpy.ops.export_scene.gltf(filepath=r'{destino}', export_format='GLB', export_app
 
 def generar_network_security_config(logbox, backend_host):
     """
-    Genera el archivo network_security_config.xml para permitir tráfico no seguro desde el host del backend.
+    Genera el archivo network_security_config.xml para permitir tráfico HTTPS al host del backend.
     """
     network_security_dir = os.path.join(ANDROID_DIR, "app", "src", "main", "res", "xml")
     network_security_file = os.path.join(network_security_dir, "network_security_config.xml")
@@ -1527,8 +1517,11 @@ def generar_network_security_config(logbox, backend_host):
     
     network_security_content = f"""<?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
-    <domain-config cleartextTrafficPermitted="true">
+    <domain-config>
         <domain includeSubdomains="true">{backend_host}</domain>
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
     </domain-config>
 </network-security-config>
 """
