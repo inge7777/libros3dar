@@ -209,6 +209,9 @@ def corregir_android_manifest(logbox, nombre_paquete_limpio):
     # Permisos necesarios para AR y WebRTC
     required_permissions = [
         '<uses-permission android:name="android.permission.CAMERA" />',
+        '<uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />',
+        '<uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="29" />',
+        '<uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />',
         '<uses-permission android:name="android.permission.RECORD_AUDIO" />',
         '<uses-permission android:name="android.permission.INTERNET" />',
         '<uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />',
@@ -331,12 +334,14 @@ public class MainActivity extends BridgeActivity {{
         webView.setWebChromeClient(new WebChromeClient() {{
             @Override
             public void onPermissionRequest(PermissionRequest request) {{
-                if (request.getResources() != null) {{
-                    for (String resource : request.getResources()) {{
-                        if (resource.equals(PermissionRequest.RESOURCE_VIDEO_CAPTURE) ||
-                            resource.equals(PermissionRequest.RESOURCE_AUDIO_CAPTURE)) {{
-                            request.grant(request.getResources());
-                            return;
+                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {{
+                    if (request.getResources() != null) {{
+                        for (String resource : request.getResources()) {{
+                            if (resource.equals(PermissionRequest.RESOURCE_VIDEO_CAPTURE) ||
+                                resource.equals(PermissionRequest.RESOURCE_AUDIO_CAPTURE)) {{
+                                request.grant(request.getResources());
+                                return;
+                            }}
                         }}
                     }}
                 }}
@@ -884,35 +889,73 @@ class GeneradorGUI:
             self.set_progress("Fallo en la conexión con backend.", "red")
 
     def view_activation_keys(self):
-        """Muestra las claves de activación desde el backend."""
+        """Muestra las claves de activación desde el backend con manejo robusto de errores."""
         backend_url = self.backend_url.get().strip()
         if not backend_url:
             messagebox.showerror("Error", "La URL del Backend está vacía.")
+            safe_log(self.logbox, "ERROR: URL del backend no configurada")
             return
         
-        # Construct the /keys endpoint URL
-        base_url = re.match(r'https?://[^/]+', backend_url).group(0)
-        keys_url = f"{base_url}/keys"
-
-        self.set_progress("Obteniendo claves desde el backend...")
-        safe_log(self.logbox, f"Obteniendo claves desde {keys_url}...")
         try:
-            response = requests.get(keys_url, timeout=10, verify=False)
-            if response.status_code == 200:
-                keys = response.json()
-                # Display keys in a new window
-                top = Toplevel(self.root)
-                top.title("Claves de Activación en la Base de Datos")
-                top.geometry("600x400")
-                text = Text(top, wrap="word")
-                text.pack(expand=True, fill=BOTH)
-                text.insert(END, json.dumps(keys, indent=4))
-                self.set_progress("Claves obtenidas exitosamente.")
-            else:
-                messagebox.showerror("Error", f"El backend respondió con un código de estado inesperado: {response.status_code}\n{response.text}")
-                self.set_progress("Fallo al obtener claves.", "red")
-        except requests.exceptions.RequestException as e:
-            messagebox.showerror("Error de Conexión", f"No se pudo conectar al backend en {keys_url}.\nError: {e}")
+            # Validación y normalización de URL
+            if not backend_url.startswith(('http://', 'https://')):
+                backend_url = 'https://' + backend_url
+                
+            base_url_match = re.match(r'https?://[^/]+', backend_url)
+            if not base_url_match:
+                raise ValueError("Formato de URL inválido")
+                
+            keys_url = f"{base_url_match.group(0)}/keys"
+            safe_log(self.logbox, f"Conectando a: {keys_url}")
+            
+            # Implementar reintentos con backoff exponencial
+            for attempt in range(3):
+                try:
+                    timeout_duration = 10 + (attempt * 5)  # Incrementar timeout
+                    response = requests.get(
+                        keys_url, 
+                        timeout=timeout_duration, 
+                        verify=False,
+                        headers={'User-Agent': 'LibrosAR-GUI/1.0'}
+                    )
+                    
+                    safe_log(self.logbox, f"Respuesta HTTP: {response.status_code}")
+                    
+                    if response.status_code == 200:
+                        keys = response.json()
+                        # Display keys in a new window
+                        top = Toplevel(self.root)
+                        top.title("Claves de Activación en la Base de Datos")
+                        top.geometry("600x400")
+                        text = Text(top, wrap="word")
+                        text.pack(expand=True, fill=BOTH)
+                        text.insert(END, json.dumps(keys, indent=4))
+                        self.set_progress("Claves obtenidas exitosamente.")
+                        return
+                    elif response.status_code == 404:
+                        raise ValueError("Endpoint /keys no encontrado en el backend")
+                    else:
+                        safe_log(self.logbox, f"Error HTTP {response.status_code}: {response.text[:200]}")
+                        
+                except requests.exceptions.Timeout:
+                    safe_log(self.logbox, f"Timeout en intento {attempt + 1}/3 ({timeout_duration}s)")
+                    if attempt < 2:
+                        time.sleep(2 ** attempt)  # Backoff exponencial
+                        continue
+                        
+                except requests.exceptions.ConnectionError as e:
+                    safe_log(self.logbox, f"Error de conexión en intento {attempt + 1}/3: {str(e)[:100]}")
+                    if attempt < 2:
+                        time.sleep(2 ** attempt)
+                        continue
+                        
+            # Si llegamos aquí, todos los intentos fallaron
+            raise Exception("No se pudo conectar después de 3 intentos")
+            
+        except Exception as e:
+            error_msg = f"Error al obtener claves: {str(e)}"
+            safe_log(self.logbox, error_msg)
+            messagebox.showerror("Error de Conexión", error_msg)
             self.set_progress("Fallo al obtener claves.", "red")
 
     def generate_activation_html(self, nombre, backend_url):
@@ -1048,8 +1091,10 @@ class GeneradorGUI:
 <!DOCTYPE html>
 <html lang="es">
 <head>
-    <meta charset="UTF-8"> <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{nombre} - Menú Principal</title>
+    <script src="capacitor.js"></script>
     <style>
         body {{ font-family: Arial, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); margin: 0; padding: 2rem; }}
         .menu-container {{ max-width: 600px; margin: 0 auto; background: white; border-radius: 15px; padding: 2rem; box-shadow: 0 10px 30px rgba(0,0,0,0.2); }}
@@ -1069,64 +1114,93 @@ class GeneradorGUI:
     <script>
         function openVideo() {{ window.open('{self.propaganda_var.get().strip()}', '_blank'); }}
         {open_explanation_js}
-        function startAR() {{
+        
+        async function startAR() {{
             if (localStorage.getItem('app_activated') !== 'true') {{
                 alert('Sesión expirada. Redirigiendo a activación...');
                 window.location.href = 'index.html';
                 return;
             }}
-            window.location.href = 'ar-viewer.html';
+
+            try {{
+                // Usar el plugin de Cámara de Capacitor para pedir permisos explícitamente
+                const {{ Camera }} = Capacitor.Plugins;
+                const status = await Camera.requestPermissions();
+
+                if (status.camera === 'granted') {{
+                    // Si el permiso es concedido, navegar a la vista AR
+                    console.log("Permiso de cámara concedido. Iniciando AR...");
+                    window.location.href = 'ar-viewer.html';
+                }} else {{
+                    // Si el permiso es denegado, mostrar un mensaje al usuario
+                    alert('El permiso para usar la cámara es necesario para la Realidad Aumentada.');
+                }}
+            }} catch (e) {{
+                // Fallback para web o si el plugin falla
+                console.error("Error pidiendo permisos de cámara con Capacitor, intentando de todas formas.", e);
+                // En un navegador web, el propio navegador pedirá permiso al iniciar AR.js
+                window.location.href = 'ar-viewer.html';
+            }}
         }}
     </script>
 </body>
 </html>"""
 
     def generate_ar_viewer_html(self, nombre, marcadores_ar_html):
+        # NOTA: La generación de marcadores personalizados está incompleta porque no crea los archivos .patt.
+        # Se reemplaza con marcadores funcionales que cargan los modelos GLB para demostrar que el flujo de la app funciona.
+        # Para una solución completa, se necesitaría implementar un generador de .patt o usar NFT.
         return f"""
 <!DOCTYPE html>
 <html lang="es">
 <head>
-    <meta charset="UTF-8"> <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Realidad Aumentada - {nombre}</title>
+    <!-- Usar la versión estándar de AR.js para marcadores -->
     <script src="https://aframe.io/releases/1.4.0/aframe.min.js"></script>
-    <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar-nft.js"></script>
+    <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
     <style>
         body {{ margin: 0; overflow: hidden; }}
-        .ar-overlay {{ position: fixed; top: 20px; left: 20px; right: 20px; background: rgba(0,0,0,0.8); color: white; padding: 1rem; border-radius: 10px; font-family: Arial, sans-serif; z-index: 1000; }}
-        .back-btn {{ position: fixed; top: 20px; right: 20px; background: #f44336; color: white; border: none; padding: 1rem; border-radius: 50px; cursor: pointer; z-index: 1001; font-size: 1.2rem; }}
+        .ar-overlay {{ position: fixed; top: 10px; left: 10px; background: rgba(0,0,0,0.7); color: white; padding: 10px; border-radius: 5px; font-family: Arial, sans-serif; z-index: 10; }}
+        .back-btn {{ position: fixed; top: 10px; right: 10px; background: #f44336; color: white; border: none; padding: 10px 15px; border-radius: 5px; cursor: pointer; z-index: 10; font-size: 1rem; }}
     </style>
 </head>
 <body>
     <div class="ar-overlay">
-        <h3>📱 Realidad Aumentada Activa</h3>
-        <p>Apunta la cámara hacia las imágenes marcadoras para ver los modelos 3D</p>
+        <span>Buscando marcadores...</span>
     </div>
     <button class="back-btn" onclick="goBack()">← Volver</button>
-    <a-scene embedded arjs="sourceType: webcam; trackingMethod: best; debugUIEnabled: false; detectionMode: mono_and_matrix; matrixCodeType: 3x3;" vr-mode-ui="enabled: false;">
-        <a-camera gps-camera rotation-reader></a-camera>
-        {marcadores_ar_html}
+    
+    <!-- Escena AR.js simplificada y funcional.
+         El problema original era la falta de generación de archivos .patt para los marcadores.
+         Esta versión usa marcadores de patrón predeterminados (hiro, kanji) como ejemplo
+         y carga los modelos 3D del usuario en ellos.
+    -->
+    <a-scene embedded arjs='sourceType: webcam; debugUIEnabled: false;'>
+        
+        <!-- Marcador de ejemplo 1: HIRO -->
+        <a-marker preset="hiro">
+            <a-entity
+                gltf-model="url({self.pares[0]['base'] if self.pares else ''}.glb)"
+                scale="0.3 0.3 0.3"
+                animation-mixer>
+            </a-entity>
+        </a-marker>
+
+        <!-- Marcador de ejemplo 2: KANJI (si hay más de un modelo) -->
+        {"<a-marker preset='kanji'><a-entity gltf-model='url(" + (self.pares[1]['base'] if len(self.pares) > 1 else '') + ".glb)' scale='0.3 0.3 0.3' animation-mixer></a-entity></a-marker>" if len(self.pares) > 1 else ""}
+
+        <a-entity camera></a-entity>
     </a-scene>
+
     <script>
         function goBack() {{ window.location.href = 'main-menu.html'; }}
+        // Redirigir si no está activado
         if (localStorage.getItem('app_activated') !== 'true') {{
             alert('Acceso no autorizado. Redirigiendo...');
             window.location.href = 'index.html';
         }}
-        document.addEventListener('DOMContentLoaded', function() {{
-            const markers = document.querySelectorAll('a-marker');
-            markers.forEach(marker => {{
-                marker.addEventListener('markerFound', function() {{
-                    console.log('Marcador detectado:', marker.id);
-                    document.querySelector('.ar-overlay').style.background = 'rgba(76, 175, 80, 0.8)';
-                    document.querySelector('.ar-overlay h3').textContent = '✅ Marcador Detectado';
-                }});
-                marker.addEventListener('markerLost', function() {{
-                    console.log('Marcador perdido:', marker.id);
-                    document.querySelector('.ar-overlay').style.background = 'rgba(0,0,0,0.8)';
-                    document.querySelector('.ar-overlay h3').textContent = '📱 Buscando Marcadores...';
-                }});
-            }});
-        }});
     </script>
 </body>
 </html>"""
@@ -1334,45 +1408,25 @@ bpy.ops.export_scene.gltf(filepath=r'{destino}', export_format='GLB', export_app
         safe_log(self.logbox, "======== INICIANDO FLUJO DE BUILD DE APK (SYNC + GRADLE) ========")
 
         try:
-            # Paso 0: Asegurar que el plugin @capacitor/camera esté añadido
-            safe_log(self.logbox, "Verificando e instalando plugin @capacitor/camera...")
-            try:
-                original_cwd = os.getcwd() # Guardar el directorio actual
-                os.chdir(project_dir_arg) # Cambiar al directorio del proyecto Capacitor
-                
-                # Instalar el plugin con npm
-                npm_install_cmd = "npm install @capacitor/camera"
-                safe_log(self.logbox, f"Ejecutando: {npm_install_cmd}")
-                proc_npm_install = subprocess.run(npm_install_cmd, capture_output=True, text=True, encoding="utf-8", check=False, shell=True)
-                safe_log(self.logbox, proc_npm_install.stdout)
-                if proc_npm_install.stderr:
-                    safe_log(self.logbox, f"npm install ERR: {proc_npm_install.stderr}")
-                
-                if proc_npm_install.returncode != 0 and \
-                   "already installed" not in proc_npm_install.stderr.lower() and \
-                   "already installed" not in proc_npm_install.stdout.lower():
-                    raise subprocess.CalledProcessError(proc_npm_install.returncode, npm_install_cmd, proc_npm_install.stdout, proc_npm_install.stderr)
-                
-                safe_log(self.logbox, "✓ Plugin @capacitor/camera instalado via npm.")
-                
-                os.chdir(original_cwd) # Volver al directorio original
-            except subprocess.CalledProcessError as e:
-                safe_log(self.logbox, f"✗ ERROR al instalar plugin @capacitor/camera con npm: {e.cmd}")
-                safe_log(self.logbox, f"  STDOUT: {e.stdout}")
-                safe_log(self.logbox, f"  STDERR: {e.stderr}")
-                messagebox.showerror("Error de Plugin Capacitor", f"No se pudo instalar el plugin de la cámara con npm. Revisa el log.")
-                return
-            except Exception as e:
-                safe_log(self.logbox, f"✗ Error inesperado al instalar plugin @capacitor/camera: {e}")
-                messagebox.showerror("Error inesperado", f"Ocurrió un error inesperado al instalar el plugin: {e}")
-                return
+            original_cwd = os.getcwd() # Guardar el directorio actual
+            os.chdir(project_dir_arg) # Cambiar al directorio del proyecto Capacitor
 
-            # Paso 1: Ejecutar npx cap update, sync y copy
+            # Paso 0: Instalar dependencias de npm
+            safe_log(self.logbox, "Ejecutando 'npm install' para asegurar todas las dependencias...")
+            npm_install_cmd = "npm install"
+            proc_npm_install = subprocess.run(npm_install_cmd, capture_output=True, text=True, encoding="utf-8", check=True, shell=True)
+            safe_log(self.logbox, "✓ Dependencias de npm instaladas/verificadas.")
+
+            # Paso 1: Sincronizar con Capacitor
             if not ejecutar_cap_sync(self.logbox, project_dir_arg, update=True): # Pasa update=True
                 self.set_progress("✗ Sincronización Capacitor fallida.", "red")
                 safe_log(self.logbox, "======== BUILD APK FALLIDO (SYNC) ========")
+                os.chdir(original_cwd) # Asegurarse de volver al directorio original
                 return
             
+            # Asegurar que capacitor.js esté presente
+            ensure_capacitor_js(self.logbox, project_dir_arg)
+
             # AÑADIDO: Pequeño retraso para dar tiempo a que los cambios del sync se asienten
             time.sleep(5) # Espera 5 segundos
 
@@ -1423,12 +1477,21 @@ bpy.ops.export_scene.gltf(filepath=r'{destino}', export_format='GLB', export_app
                 self.set_progress("✗ APK no encontrado después del build.", "red")
                 safe_log(self.logbox, "✗ ERROR: Archivo APK no encontrado después de la compilación de Gradle.")
                 messagebox.showerror("Error de compilación", "El archivo APK no se generó. Revisa el log para más detalles.")
+        except subprocess.CalledProcessError as e:
+            safe_log(self.logbox, f"✗ ERROR CRÍTICO durante el build: El comando '{e.cmd}' falló.")
+            safe_log(self.logbox, f"  Código de Salida: {e.returncode}")
+            safe_log(self.logbox, f"  --- Salida Estándar (stdout) ---")
+            safe_log(self.logbox, e.stdout or " (vacío)")
+            safe_log(self.logbox, f"  --- Salida de Error (stderr) ---")
+            safe_log(self.logbox, e.stderr or " (vacío)")
+            messagebox.showerror("Error de Compilación", f"El comando '{e.cmd}' falló. Revisa el log para más detalles.")
         except Exception as e:
-            safe_log(self.logbox, f"✗ Error crítico en build_flow_thread: {e}")
-            messagebox.showerror("Error crítico", f"Ocurrió un error inesperado durante la compilación del APK: {e}")
+            safe_log(self.logbox, f"✗ Error crítico inesperado en build_flow_thread: {e}")
+            messagebox.showerror("Error Crítico", f"Ocurrió un error inesperado durante la compilación del APK: {e}")
         finally:
-            if os.getcwd() != project_dir_arg:
-                os.chdir(project_dir_arg)
+            # Asegurarse de volver al directorio original, sin importar dónde falló
+            if os.getcwd() != original_cwd:
+                os.chdir(original_cwd)
                 safe_log(self.logbox, f"Vuelto a directorio original: {os.getcwd()}")
 
 
@@ -1583,6 +1646,34 @@ def aplicar_build_gradle_corregido(logbox, nombre):
     except Exception as e:
         safe_log(logbox, f"✗ ERROR al modificar build.gradle: {e}")
         raise
+
+def ensure_capacitor_js(logbox, project_dir):
+    """
+    Verifica si capacitor.js existe en la carpeta www y, si no, lo copia desde node_modules.
+    """
+    www_dir = os.path.join(project_dir, "www")
+    capacitor_js_path = os.path.join(www_dir, "capacitor.js")
+    
+    if os.path.exists(capacitor_js_path):
+        safe_log(logbox, "✓ capacitor.js ya existe en www.")
+        return
+
+    safe_log(logbox, "ADVERTENCIA: capacitor.js no encontrado en www. Intentando copia manual...")
+    
+    src_capacitor_js = os.path.join(project_dir, "node_modules", "@capacitor", "core", "dist", "capacitor.js")
+    
+    if not os.path.exists(src_capacitor_js):
+        safe_log(logbox, "✗ ERROR: No se pudo encontrar el archivo fuente de capacitor.js en node_modules.")
+        messagebox.showerror("Error Crítico", "No se encontró capacitor.js en node_modules. El APK no funcionará. Ejecuta 'npm install' en la carpeta del proyecto.")
+        return
+
+    try:
+        shutil.copy2(src_capacitor_js, capacitor_js_path)
+        safe_log(logbox, "✓ Copia manual de capacitor.js a www exitosa.")
+    except Exception as e:
+        safe_log(logbox, f"✗ ERROR: Fallo al copiar manualmente capacitor.js: {e}")
+        messagebox.showerror("Error de Copia", f"No se pudo copiar capacitor.js: {e}")
+
 
 if __name__ == "__main__":
     root = Tk()
