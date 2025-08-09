@@ -224,8 +224,7 @@ def corregir_android_manifest(logbox, nombre_paquete_limpio):
         return
 
     manifest_content = f'''<?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.libros3dar.{nombre_paquete_limpio}">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <!-- Permisos necesarios para AR y WebRTC -->
     <uses-permission android:name="android.permission.INTERNET" />
@@ -266,7 +265,7 @@ def corregir_android_manifest(logbox, nombre_paquete_limpio):
 
         <provider
             android:name="androidx.core.content.FileProvider"
-            android:authorities="com.libros3dar.{nombre_paquete_limpio}.fileprovider"
+            android:authorities="${{applicationId}}.fileprovider"
             android:exported="false"
             android:grantUriPermissions="true">
             <meta-data
@@ -362,6 +361,129 @@ def crear_archivos_adicionales_android(logbox, backend_host=None):
 
 # --- Funciones robustas para generación de marcadores y compilación ---
 
+def generar_network_security_config(logbox, backend_host):
+    """
+    Genera el archivo network_security_config.xml para permitir tráfico HTTPS al host del backend.
+    """
+    network_security_dir = os.path.join(ANDROID_DIR, "app", "src", "main", "res", "xml")
+    network_security_file = os.path.join(network_security_dir, "network_security_config.xml")
+    
+    os.makedirs(network_security_dir, exist_ok=True)
+    
+    network_security_content = f"""<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <domain-config>
+        <domain includeSubdomains="true">{backend_host}</domain>
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </domain-config>
+</network-security-config>
+"""
+    try:
+        with open(network_security_file, "w", encoding="utf-8") as f:
+            f.write(network_security_content)
+        safe_log(logbox, f"✓ network_security_config.xml generado en: {network_security_file}")
+    except Exception as e:
+        safe_log(logbox, f"✗ ERROR al generar network_security_config.xml: {e}")
+        raise
+
+def configurar_gradle_build(logbox, nombre_paquete_limpio):
+    '''
+    Configura el archivo build.gradle (Module: app) con las dependencias y configuraciones correctas para AR.
+    '''
+    gradle_file = os.path.join(ANDROID_DIR, "app", "build.gradle")
+    
+    # El applicationId debe coincidir con el del Manifest y capacitor.config.json
+    application_id = f"com.libros3dar.{nombre_paquete_limpio}"
+
+    gradle_content = f'''apply plugin: 'com.android.application'
+
+android {{
+    namespace "{application_id}"
+    compileSdkVersion 34
+    defaultConfig {{
+        applicationId "{application_id}"
+        minSdkVersion 24
+        targetSdkVersion 34
+        versionCode 1
+        versionName "1.0"
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+    }}
+    buildTypes {{
+        release {{
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }}
+    }}
+    compileOptions {{
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }}
+    packagingOptions {{
+        exclude 'META-INF/DEPENDENCIES'
+        exclude 'META-INF/LICENSE'
+        exclude 'META-INF/LICENSE.txt'
+        exclude 'META-INF/license.txt'
+        exclude 'META-INF/NOTICE'
+        exclude 'META-INF/NOTICE.txt'
+        exclude 'META-INF/notice.txt'
+        exclude 'META-INF/ASL2.0'
+        exclude("META-INF/*.kotlin_module")
+    }}
+}}
+
+repositories {{
+    google()
+    mavenCentral()
+}}
+
+dependencies {{
+    implementation fileTree(dir: 'libs', include: ['*.jar'])
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation project(':capacitor-android')
+    testImplementation 'junit:junit:4.13.2'
+    androidTestImplementation 'androidx.test.ext:junit:1.1.5'
+    androidTestImplementation 'androidx.test.espresso:espresso-core:3.5.1'
+    implementation 'androidx.webkit:webkit:1.7.0'
+}}
+'''
+    
+    try:
+        with open(gradle_file, 'w', encoding='utf-8') as f:
+            f.write(gradle_content)
+        safe_log(logbox, "✓ build.gradle configurado correctamente con dependencias AR.")
+    except Exception as e:
+        safe_log(logbox, f"✗ ERROR configurando build.gradle: {e}")
+        raise
+
+def ensure_capacitor_js(logbox, project_dir):
+    """
+    Verifica si capacitor.js existe en la carpeta www y, si no, lo copia desde node_modules.
+    """
+    www_dir = os.path.join(project_dir, "www")
+    capacitor_js_path = os.path.join(www_dir, "capacitor.js")
+    
+    if os.path.exists(capacitor_js_path):
+        safe_log(logbox, "✓ capacitor.js ya existe en www.")
+        return
+
+    safe_log(logbox, "ADVERTENCIA: capacitor.js no encontrado en www. Intentando copia manual...")
+    
+    src_capacitor_js = os.path.join(project_dir, "node_modules", "@capacitor", "core", "dist", "capacitor.js")
+    
+    if not os.path.exists(src_capacitor_js):
+        safe_log(logbox, "✗ ERROR: No se pudo encontrar el archivo fuente de capacitor.js en node_modules.")
+        messagebox.showerror("Error Crítico", "No se encontró capacitor.js en node_modules. El APK no funcionará. Ejecuta 'npm install' en la carpeta del proyecto.")
+        return
+
+    try:
+        shutil.copy2(src_capacitor_js, capacitor_js_path)
+        safe_log(logbox, "✓ Copia manual de capacitor.js a www exitosa.")
+    except Exception as e:
+        safe_log(logbox, f"✗ ERROR: Fallo al copiar manualmente capacitor.js: {e}")
+        messagebox.showerror("Error de Copia", f"No se pudo copiar capacitor.js: {e}")
+
 NFT_CREATOR_PATH = os.path.join(BASE_DIR, "tools", "NFT-Marker-Creator")
 
 def verificar_nft_marker_creator(logbox):
@@ -441,8 +563,6 @@ def diagnosticar_espacio_disco(logbox):
     '''
     Diagnostica en detalle el uso de espacio en disco
     '''
-    import psutil
-    
     try:
         safe_log(logbox, "=== DIAGNÓSTICO DE ESPACIO EN DISCO ===")
         
@@ -511,8 +631,6 @@ def verificar_espacio_disco(logbox):
     '''
     Verifica el espacio disponible en los discos críticos
     '''
-    import psutil
-    
     try:
         # Verificar disco C: (cache de Gradle)
         disk_c = psutil.disk_usage('C:')
@@ -544,233 +662,313 @@ def verificar_espacio_disco(logbox):
         safe_log(logbox, f"⚠ Error verificando espacio en disco: {e}")
         return True
 
-def limpiar_cache_gradle_completo(logbox):
-    '''
-    Limpia cache de Gradle de forma más agresiva para liberar espacio
-    '''
-    import glob
+def configurar_gradle_en_disco_d(logbox, nombre_paquete_limpio):
+    """
+    Configura Gradle para usar el disco D cuando el disco C tiene poco espacio libre.
+    Esta función modifica las configuraciones de Gradle para optimizar el uso de espacio en disco.
     
+    Args:
+        logbox: Widget de log para mostrar mensajes de estado
+        nombre_paquete_limpio: El nombre del paquete para usar en el namespace.
+    
+    Returns:
+        bool: True si la configuración fue exitosa, False en caso contrario
+    """
     try:
-        # 1. Limpiar cache local del proyecto
-        gradle_cache_project = os.path.join(ANDROID_DIR, ".gradle")
-        if os.path.exists(gradle_cache_project):
-            shutil.rmtree(gradle_cache_project)
-            safe_log(logbox, "✓ Cache local de Gradle limpiado")
+        safe_log(logbox, "Configurando Gradle para usar disco D...")
         
-        # 2. Limpiar directorio build completo
-        build_dirs = [
-            os.path.join(ANDROID_DIR, "app", "build"),
-            os.path.join(ANDROID_DIR, "build"),
-            os.path.join(PROJECT_DIR, "node_modules", ".cache")
+        # 1. Configurar GRADLE_USER_HOME para usar disco D
+        gradle_user_home = r"D:\gradle_cache"
+        os.makedirs(gradle_user_home, exist_ok=True)
+        
+        # Establecer variable de entorno para la sesión actual
+        os.environ['GRADLE_USER_HOME'] = gradle_user_home
+        safe_log(logbox, f"✓ GRADLE_USER_HOME configurado en: {gradle_user_home}")
+        
+        # 2. Crear archivo gradle.properties en el directorio de trabajo del proyecto
+        gradle_properties_path = os.path.join(PROJECT_DIR, "gradle.properties")
+        gradle_properties_content = f"""# Configuración optimizada para disco D
+org.gradle.daemon=true
+org.gradle.parallel=true
+org.gradle.caching=true
+org.gradle.configureondemand=true
+
+# Configuración de memoria optimizada
+org.gradle.jvmargs=-Xmx4096m -XX:MaxPermSize=512m -XX:+HeapDumpOnOutOfMemoryError
+
+# Directorio de cache personalizado en disco D
+org.gradle.cache.dir=D:\\\\gradle_cache\\\\caches
+
+# Configuración de Android optimizada
+android.enableBuildCache=true
+android.useAndroidX=true
+android.enableJetifier=true
+
+# Kotlin optimizations
+kotlin.incremental=true
+kotlin.incremental.usePreciseJavaTracking=true
+kotlin.parallel.tasks.in.project=true
+"""
+        
+        with open(gradle_properties_path, 'w', encoding='utf-8') as f:
+            f.write(gradle_properties_content)
+        safe_log(logbox, f"✓ Archivo gradle.properties creado en: {gradle_properties_path}")
+        
+        # 3. Configurar gradle.properties global en GRADLE_USER_HOME
+        global_gradle_properties = os.path.join(gradle_user_home, "gradle.properties")
+        with open(global_gradle_properties, 'w', encoding='utf-8') as f:
+            f.write(gradle_properties_content)
+        safe_log(logbox, f"✓ Configuración global de Gradle creada en: {global_gradle_properties}")
+        
+        # 4. Configurar build directory y namespace en el proyecto Android
+        android_gradle_path = os.path.join(ANDROID_DIR, "app", "build.gradle")
+        if os.path.exists(android_gradle_path):
+            with open(android_gradle_path, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+
+            # Comprobar si las configuraciones ya existen
+            namespace_exists = any('namespace' in line for line in lines)
+            builddir_exists = any('buildDir' in line for line in lines)
+
+            if not namespace_exists or not builddir_exists:
+                with open(android_gradle_path, 'w', encoding='utf-8') as f:
+                    inserted = False
+                    for line in lines:
+                        f.write(line)
+                        if 'android {' in line and not inserted:
+                            if not namespace_exists:
+                                f.write(f'    namespace "com.libros3dar.{nombre_paquete_limpio}"\n')
+                            if not builddir_exists:
+                                # Usar una ruta relativa al buildDir del proyecto para mayor portabilidad
+                                f.write(f'    buildDir = file("D:/android_builds/{nombre_paquete_limpio}")\n')
+                            inserted = True
+                safe_log(logbox, "✓ build.gradle actualizado con namespace y buildDir.")
+        
+        # 5. Crear directorios necesarios en disco D
+        directories_to_create = [
+            r"D:\gradle_cache",
+            r"D:\gradle_cache\caches", 
+            r"D:\gradle_cache\wrapper",
+            r"D:\android_builds",
+            r"D:\android_temp"
         ]
         
-        for build_dir in build_dirs:
-            if os.path.exists(build_dir):
-                shutil.rmtree(build_dir)
-                safe_log(logbox, f"✓ Directorio limpiado: {os.path.basename(build_dir)}")
+        for dir_path in directories_to_create:
+            os.makedirs(dir_path, exist_ok=True)
         
-        # 3. Limpiar cache de usuario de Gradle (¡CUIDADO!)
-        gradle_user_cache = os.path.join(os.path.expanduser("~"), ".gradle", "caches")
-        if os.path.exists(gradle_user_cache):
-            # Solo limpiar subcaches específicos para liberar espacio
-            subcaches_to_clean = [
-                "build-cache-*",
-                "transforms-*",
-                "temp-*"
-            ]
-            
-            for pattern in subcaches_to_clean:
-                matching_dirs = glob.glob(os.path.join(gradle_user_cache, pattern))
-                for cache_dir in matching_dirs:
-                    try:
-                        shutil.rmtree(cache_dir)
-                        safe_log(logbox, f"✓ Cache limpiado: {os.path.basename(cache_dir)}")
-                    except Exception as e:
-                        safe_log(logbox, f"⚠ No se pudo limpiar {os.path.basename(cache_dir)}: {e}")
+        safe_log(logbox, "✓ Directorios de cache creados en disco D")
         
-        # 4. Limpiar archivos temporales del sistema
-        import tempfile
-        temp_dir = tempfile.gettempdir()
-        temp_gradle_files = glob.glob(os.path.join(temp_dir, "gradle*"))
-        for temp_file in temp_gradle_files:
-            try:
-                if os.path.isdir(temp_file):
-                    shutil.rmtree(temp_file)
-                else:
-                    os.remove(temp_file)
-                safe_log(logbox, f"✓ Archivo temporal limpiado: {os.path.basename(temp_file)}")
-            except Exception as e:
-                # Ignorar errores en archivos temporales
-                pass
+        # 6. Configurar variables de entorno adicionales para Java/Android
+        os.environ['JAVA_OPTS'] = "-Djava.io.tmpdir=D:\\android_temp"
+        os.environ['GRADLE_OPTS'] = "-Djava.io.tmpdir=D:\\android_temp -Xmx4096m"
         
-        safe_log(logbox, "✓ Limpieza completa de cache finalizada")
+        safe_log(logbox, "✓ Variables de entorno configuradas para usar disco D")
+        safe_log(logbox, "✓ Configuración de Gradle en disco D completada exitosamente")
+        
         return True
         
     except Exception as e:
-        safe_log(logbox, f"✗ Error en limpieza de cache: {e}")
+        safe_log(logbox, f"✗ ERROR configurando Gradle en disco D: {e}")
         return False
 
-def crear_gradle_properties_optimizado_espacio(logbox):
+def compilar_apk_usando_disco_d(logbox, nombre_paquete_limpio):
     '''
-    Crea gradle.properties optimizado para usar menos espacio en disco
+    Versión del compilador que usa exclusivamente el disco D
     '''
-    gradle_props_path = os.path.join(ANDROID_DIR, "gradle.properties")
-    
-    gradle_props_content = """# Configuración de memoria optimizada para poco espacio
-org.gradle.jvmargs=-Xmx2048m -XX:MaxMetaspaceSize=256m -XX:+HeapDumpOnOutOfMemoryError -Dfile.encoding=UTF-8
+    try:
+        # 1. Configurar variables de entorno para usar disco D
+        temp_base_dir = os.path.join(BASE_DIR, "temporal")
+        os.environ['GRADLE_USER_HOME'] = os.path.join(temp_base_dir, "gradle")
+        os.environ['JAVA_OPTS'] = f'-Duser.home={temp_base_dir} -Djava.io.tmpdir={os.path.join(temp_base_dir, "temp")}'
+        os.environ['TEMP'] = os.path.join(temp_base_dir, "temp")
+        os.environ['TMP'] = os.path.join(temp_base_dir, "temp")
+        
+        safe_log(logbox, f"✓ Variables de entorno configuradas para disco D")
+        safe_log(logbox, f"  GRADLE_USER_HOME: {os.environ['GRADLE_USER_HOME']}")
+        
+        # 2. Verificar espacio una vez más
+        disk_d = psutil.disk_usage('D:')
+        free_gb_d = disk_d.free / (1024**3)
+        safe_log(logbox, f"Espacio disponible en D: {free_gb_d:.1f} GB")
+        
+        if free_gb_d < 8:
+            safe_log(logbox, f"⚠ ADVERTENCIA: Poco espacio en D: {free_gb_d:.1f} GB")
+        
+        # 3. Limpiar build anterior
+        build_dir = os.path.join(ANDROID_DIR, "app", "build")
+        if os.path.exists(build_dir):
+            try:
+                shutil.rmtree(build_dir)
+                safe_log(logbox, "✓ Directorio build anterior limpiado")
+            except Exception as e:
+                safe_log(logbox, f"⚠ No se pudo limpiar build anterior: {e}")
+        
+        # 4. Configurar gradle.properties específico para disco D
+        gradle_props_path = os.path.join(ANDROID_DIR, "gradle.properties")
+        gradle_props_content = f'''# Configuración para usar disco D exclusivamente
+org.gradle.jvmargs=-Xmx2048m -XX:MaxMetaspaceSize=256m -Dfile.encoding=UTF-8 -Djava.io.tmpdir={os.path.join(temp_base_dir, "temp").replace(os.sep, '/')}
 org.gradle.daemon=false
 org.gradle.parallel=false
-org.gradle.workers.max=1
 org.gradle.caching=false
-org.gradle.configureondemand=false
+org.gradle.user.home={os.path.join(temp_base_dir, "gradle").replace(os.sep, '/')}
 
 # Configuración Android
 android.useAndroidX=true
 android.enableJetifier=true
 android.nonTransitiveRClass=false
-
-# Optimizaciones de espacio
 android.suppressUnsupportedCompileSdk=34
-android.enableBuildCache=false
-android.enableSeparateAnnotationProcessing=true
-
-# Deshabilitar features no necesarias para ahorrar espacio
-android.defaults.buildfeatures.aidl=false
-android.defaults.buildfeatures.renderscript=false
-android.defaults.buildfeatures.shaders=false"""
-
-    try:
+'''
+        
         with open(gradle_props_path, 'w', encoding='utf-8') as f:
             f.write(gradle_props_content)
-        safe_log(logbox, "✓ gradle.properties optimizado para poco espacio creado")
-        return True
-    except Exception as e:
-        safe_log(logbox, f"✗ Error creando gradle.properties: {e}")
-        return False
-
-def compilar_apk_con_limpieza_espacio(logbox, nombre_paquete_limpio):
-    '''
-    Versión del compilador que maneja proactivamente el espacio en disco
-    '''
-    # 1. Verificar espacio antes de empezar
-    if not verificar_espacio_disco(logbox):
-        safe_log(logbox, "✗ ERROR: No hay suficiente espacio en disco para continuar")
-        return None
-    
-    # 2. Limpieza agresiva inicial
-    limpiar_cache_gradle_completo(logbox)
-    
-    # 3. Configurar archivos con optimizaciones de espacio
-    if not configurar_build_gradle_proyecto(logbox):
-        return None
-    
-    if not configurar_settings_gradle(logbox):
-        return None
+        safe_log(logbox, "✓ gradle.properties actualizado para disco D")
         
-    if not crear_gradle_properties_optimizado_espacio(logbox):
-        return None
-    
-    if not actualizar_gradle_wrapper_corregido(logbox):
-        return None
-    
-    if not configurar_gradle_build_completo(logbox, nombre_paquete_limpio):
-        return None
-    
-    max_intentos = 2  # Reducir intentos para ahorrar espacio
-    for intento in range(1, max_intentos + 1):
-        safe_log(logbox, f"Intento {intento}/{max_intentos} de compilación...")
-        
-        # Limpieza antes de cada intento
-        if intento > 1:
-            limpiar_cache_gradle_completo(logbox)
-            time.sleep(5)  # Dar tiempo para que se libere el espacio
-        
-        try:
-            # Verificar espacio antes de cada intento
-            if not verificar_espacio_disco(logbox):
-                safe_log(logbox, f"✗ Espacio insuficiente en intento {intento}")
-                if intento < max_intentos:
-                    safe_log(logbox, "Intentando limpieza más agresiva...")
-                    limpiar_cache_gradle_completo(logbox)
-                    time.sleep(10)
-                    continue
-                return None
-            
-            # Capacitor sync
-            cmd_sync = ["npx", "cap", "sync", "android"]
-            safe_log(logbox, f"Ejecutando: {' '.join(cmd_sync)}")
-            result = subprocess.run(cmd_sync, cwd=PROJECT_DIR, capture_output=True, text=True, timeout=300, shell=True)
-            
-            if result.returncode != 0:
-                safe_log(logbox, f"ERROR en cap sync (intento {intento}): {result.stderr}")
-                if intento < max_intentos: 
-                    time.sleep(15)
-                    continue
-                return None
-            safe_log(logbox, "✓ Capacitor sync completado")
-            
-            # Build con una sola opción para ahorrar espacio
-            gradle_cmd = ["gradlew.bat", "assembleDebug", "--no-daemon", "--no-build-cache"]
+        # 5. Intentar build con configuración de disco D
+        max_intentos = 2
+        for intento in range(1, max_intentos + 1):
+            safe_log(logbox, f"=== INTENTO {intento}/{max_intentos} DE COMPILACIÓN USANDO DISCO D ===")
             
             try:
-                safe_log(logbox, f"Intentando build con: {' '.join(gradle_cmd)}")
+                # Preparar entorno para subprocess
+                env = os.environ.copy()
+                env['GRADLE_USER_HOME'] = os.path.join(temp_base_dir, "gradle")
+                env['TEMP'] = os.path.join(temp_base_dir, "temp")
+                env['TMP'] = os.path.join(temp_base_dir, "temp")
+                env['JAVA_OPTS'] = f'-Djava.io.tmpdir={os.path.join(temp_base_dir, "temp")}'
+                
+                # Capacitor sync
+                safe_log(logbox, "Ejecutando capacitor sync...")
+                cmd_sync = ["npx", "cap", "sync", "android"]
+                result = subprocess.run(
+                    cmd_sync, 
+                    cwd=PROJECT_DIR, 
+                    capture_output=True, 
+                    text=True, 
+                    timeout=300,
+                    env=env,
+                    shell=True
+                )
+                
+                if result.returncode != 0:
+                    safe_log(logbox, f"ERROR en cap sync: {result.stderr[:500]}")
+                    if intento < max_intentos:
+                        safe_log(logbox, "Reintentando cap sync...")
+                        time.sleep(10)
+                        continue
+                    return None
+                
+                safe_log(logbox, "✓ Capacitor sync completado")
+                
+                # Build de APK usando disco D
+                safe_log(logbox, "Iniciando compilación de APK usando disco D...")
+                
+                gradle_cmd = [
+                    "gradlew.bat", 
+                    "assembleDebug", 
+                    "--no-daemon",
+                    f"--gradle-user-home={os.path.join(temp_base_dir, 'gradle')}",
+                    "--stacktrace"
+                ]
+                
+                safe_log(logbox, f"Comando: {' '.join(gradle_cmd)}")
+                safe_log(logbox, f"Directorio de trabajo: {ANDROID_DIR}")
+                safe_log(logbox, f"GRADLE_USER_HOME: {env['GRADLE_USER_HOME']}")
                 
                 result = subprocess.run(
                     gradle_cmd,
                     cwd=ANDROID_DIR,
                     capture_output=True,
                     text=True,
-                    timeout=1200,  # 20 minutos
+                    timeout=1800,  # 30 minutos
+                    env=env,
                     shell=True
                 )
                 
                 if result.returncode == 0:
-                    safe_log(logbox, "✓ APK compilado exitosamente")
+                    safe_log(logbox, "✓ ¡APK COMPILADO EXITOSAMENTE USANDO DISCO D!")
                     
-                    # Copiar APK inmediatamente y limpiar
-                    apk_src = os.path.join(ANDROID_DIR, "app", "build", "outputs", "apk", "debug", "app-debug.apk")
-                    apk_dst_dir = os.path.join(OUTPUT_APK_DIR, nombre_paquete_limpio)
-                    os.makedirs(apk_dst_dir, exist_ok=True)
-                    apk_dst_file = os.path.join(apk_dst_dir, f"{nombre_paquete_limpio}.apk")
+                    # Buscar y copiar APK desde la nueva ubicación en el disco D
+                    # Esta ruta debe coincidir con la configurada en `configurar_gradle_en_disco_d`
+                    new_build_dir = os.path.join("D:", os.sep, "android_builds", nombre_paquete_limpio)
+                    apk_src = os.path.join(new_build_dir, "outputs", "apk", "debug", "app-debug.apk")
                     
                     if os.path.exists(apk_src):
-                        shutil.copy2(apk_src, apk_dst_file)
-                        safe_log(logbox, f"✓ APK copiado a: {apk_dst_file}")
+                        apk_dst_dir = os.path.join(OUTPUT_APK_DIR, nombre_paquete_limpio)
+                        os.makedirs(apk_dst_dir, exist_ok=True)
+                        apk_dst_file = os.path.join(apk_dst_dir, f"{nombre_paquete_limpio}.apk")
                         
-                        # Limpiar inmediatamente después del éxito
-                        limpiar_cache_gradle_completo(logbox)
+                        shutil.copy2(apk_src, apk_dst_file)
+                        safe_log(logbox, f"✓ APK copiado exitosamente a: {apk_dst_file}")
+                        
+                        # Verificar tamaño del APK
+                        apk_size_mb = os.path.getsize(apk_dst_file) / (1024 * 1024)
+                        safe_log(logbox, f"✓ Tamaño del APK: {apk_size_mb:.2f} MB")
+                        
+                        # Limpiar archivos temporales
+                        try:
+                            temp_cache = os.path.join(temp_base_dir, "gradle", "caches")
+                            if os.path.exists(temp_cache):
+                                shutil.rmtree(temp_cache)
+                                safe_log(logbox, "✓ Cache temporal limpiado")
+                        except:
+                            pass
                         
                         return apk_dst_file
                     else:
                         safe_log(logbox, f"✗ APK no encontrado en: {apk_src}")
+                        # Listar archivos en directorio de salida para debug
+                        output_dir = os.path.join(ANDROID_DIR, "app", "build", "outputs")
+                        if os.path.exists(output_dir):
+                            safe_log(logbox, f"Contenido de {output_dir}:")
+                            for item in os.listdir(output_dir):
+                                safe_log(logbox, f"  - {item}")
                 else:
-                    error_lines = result.stderr.split('\n')
-                    disk_space_errors = [line for line in error_lines if 'espacio' in line.lower() or 'space' in line.lower() or 'disk' in line.lower()]
+                    # Analizar errores
+                    safe_log(logbox, f"✗ Build falló con código: {result.returncode}")
                     
-                    if disk_space_errors:
-                        safe_log(logbox, "✗ ERROR CONFIRMADO: Espacio en disco insuficiente")
-                        for error in disk_space_errors[:3]:
+                    # Buscar errores específicos
+                    error_output = result.stderr + result.stdout
+                    lines = error_output.split('\n')
+                    
+                    # Errores de espacio
+                    space_errors = [line for line in lines if any(term in line.lower() for term in ['espacio', 'space', 'disk', 'no space', 'insufficient'])]
+                    if space_errors:
+                        safe_log(logbox, "ERRORES DE ESPACIO DETECTADOS:")
+                        for error in space_errors[:3]:
                             safe_log(logbox, f"  {error.strip()}")
-                    else:
-                        important_errors = [line for line in error_lines if 'error' in line.lower()][:3]
-                        for error in important_errors:
+                    
+                    # Otros errores importantes
+                    important_errors = [line for line in lines if any(term in line.lower() for term in ['error:', 'exception', 'failed', 'could not'])]
+                    if important_errors:
+                        safe_log(logbox, "OTROS ERRORES IMPORTANTES:")
+                        for error in important_errors[:5]:
                             safe_log(logbox, f"  {error.strip()}")
-                        
-            except subprocess.TimeoutExpired:
-                safe_log(logbox, f"Timeout en build con gradlew.bat")
-            except Exception as cmd_error:
-                safe_log(logbox, f"Error ejecutando gradlew.bat: {str(cmd_error)}")
-            
-            if intento < max_intentos:
-                safe_log(logbox, "Reintentando en 20 segundos...")
-                time.sleep(20)
+                    
+                    # Si no se encontraron errores específicos, mostrar las últimas líneas
+                    if not space_errors and not important_errors:
+                        safe_log(logbox, "ÚLTIMAS LÍNEAS DE SALIDA:")
+                        for line in lines[-10:]:
+                            if line.strip():
+                                safe_log(logbox, f"  {line.strip()}")
                 
-        except Exception as e:
-            safe_log(logbox, f"ERROR en intento {intento}: {e}")
-    
-    safe_log(logbox, "======== BUILD APK FALLIDO: ESPACIO EN DISCO INSUFICIENTE ========")
-    safe_log(logbox, "RECOMENDACIÓN: Libere al menos 8GB de espacio y vuelva a intentar")
-    return None
+                # Pausa entre intentos
+                if intento < max_intentos:
+                    safe_log(logbox, f"Reintentando en 15 segundos...")
+                    time.sleep(15)
+                    
+            except subprocess.TimeoutExpired:
+                safe_log(logbox, f"✗ TIMEOUT en intento {intento} (30 minutos)")
+                if intento < max_intentos:
+                    safe_log(logbox, "El build tomó demasiado tiempo, reintentando...")
+            except Exception as e:
+                safe_log(logbox, f"✗ ERROR en intento {intento}: {str(e)}")
+        
+        safe_log(logbox, "======== BUILD APK FALLIDO USANDO DISCO D ========")
+        return None
+        
+    except Exception as e:
+        safe_log(logbox, f"✗ ERROR CRÍTICO en compilar_apk_usando_disco_d: {e}")
+        return None
 
 def configurar_webview_camera_completo(logbox, android_dir_arg, nombre_paquete_limpio):
     package_name = f"com.libros3dar.{nombre_paquete_limpio}"
@@ -926,113 +1124,6 @@ def preparar_proyecto_capacitor(logbox):
     for folder in mipmap_folders:
         os.makedirs(folder, exist_ok=True)
     safe_log(logbox, "✓ Carpetas mipmap en proyecto de trabajo verificadas/creadas.")
-
-def diagnosticar_espacio_disco(logbox):
-    '''
-    Diagnostica en detalle el uso de espacio en disco
-    '''
-    import psutil
-    
-    try:
-        safe_log(logbox, "=== DIAGNÓSTICO DE ESPACIO EN DISCO ===")
-        
-        # Verificar discos principales
-        for letra in ['C:', 'D:']:
-            try:
-                disk = psutil.disk_usage(letra)
-                total_gb = disk.total / (1024**3)
-                used_gb = disk.used / (1024**3)
-                free_gb = disk.free / (1024**3)
-                percent_used = (used_gb / total_gb) * 100
-                
-                safe_log(logbox, f"Disco {letra}")
-                safe_log(logbox, f"  Total: {total_gb:.1f} GB")
-                safe_log(logbox, f"  Usado: {used_gb:.1f} GB ({percent_used:.1f}%)")
-                safe_log(logbox, f"  Libre: {free_gb:.1f} GB")
-                
-                if free_gb < 4:
-                    safe_log(logbox, f"  ⚠ CRÍTICO: Menos de 4GB libres")
-                elif free_gb < 8:
-                    safe_log(logbox, f"  ⚠ ADVERTENCIA: Menos de 8GB libres")
-                else:
-                    safe_log(logbox, f"  ✓ Espacio suficiente")
-                    
-            except Exception as e:
-                safe_log(logbox, f"No se pudo verificar disco {letra}: {e}")
-        
-        # Verificar directorios específicos
-        dirs_to_check = [
-            (os.path.join(os.path.expanduser("~"), ".gradle"), "Cache Gradle Usuario"),
-            (ANDROID_DIR, "Proyecto Android"),
-            (os.path.join(ANDROID_DIR, "app", "build"), "Build Directory"),
-        ]
-        
-        safe_log(logbox, "\n=== TAMAÑO DE DIRECTORIOS ===")
-        for dir_path, name in dirs_to_check:
-            if os.path.exists(dir_path):
-                try:
-                    total_size = 0
-                    for dirpath, dirnames, filenames in os.walk(dir_path):
-                        for filename in filenames:
-                            filepath = os.path.join(dirpath, filename)
-                            if os.path.exists(filepath):
-                                total_size += os.path.getsize(filepath)
-                    
-                    size_gb = total_size / (1024**3)
-                    safe_log(logbox, f"{name}: {size_gb:.2f} GB")
-                    
-                except Exception as e:
-                    safe_log(logbox, f"{name}: Error calculando tamaño - {e}")
-            else:
-                safe_log(logbox, f"{name}: No existe")
-        
-        safe_log(logbox, "=== RECOMENDACIONES ===")
-        safe_log(logbox, "1. Libere espacio en disco eliminando archivos innecesarios")
-        safe_log(logbox, "2. Considere mover el proyecto a un disco con más espacio")
-        safe_log(logbox, "3. Limpie el cache de Gradle manualmente")
-        safe_log(logbox, "4. Use 'Liberador de espacio en disco' de Windows")
-        
-    except ImportError:
-        safe_log(logbox, "Para diagnóstico completo, instale: pip install psutil")
-    except Exception as e:
-        safe_log(logbox, f"Error en diagnóstico: {e}")
-
-def verificar_espacio_disco(logbox):
-    '''
-    Verifica el espacio disponible en los discos críticos
-    '''
-    import psutil
-    
-    try:
-        # Verificar disco C: (cache de Gradle)
-        disk_c = psutil.disk_usage('C:')
-        free_gb_c = disk_c.free / (1024**3)
-        
-        # Verificar disco D: (proyecto)
-        disk_d = psutil.disk_usage('D:')
-        free_gb_d = disk_d.free / (1024**3)
-        
-        safe_log(logbox, f"Espacio libre en C: {free_gb_c:.1f} GB")
-        safe_log(logbox, f"Espacio libre en D: {free_gb_d:.1f} GB")
-        
-        # Se necesitan al menos 8GB libres para build de Android
-        if free_gb_c < 4:
-            safe_log(logbox, f"⚠ ADVERTENCIA: Poco espacio en C: ({free_gb_c:.1f} GB). Se necesitan al menos 4GB")
-            return False
-            
-        if free_gb_d < 4:
-            safe_log(logbox, f"⚠ ADVERTENCIA: Poco espacio en D: ({free_gb_d:.1f} GB). Se necesitan al menos 4GB")
-            return False
-            
-        safe_log(logbox, "✓ Espacio en disco suficiente para build")
-        return True
-        
-    except ImportError:
-        safe_log(logbox, "⚠ No se puede verificar espacio (instale psutil): pip install psutil")
-        return True
-    except Exception as e:
-        safe_log(logbox, f"⚠ Error verificando espacio en disco: {e}")
-        return True
 
 # ---------------------- CLASE PRINCIPAL GUI ----------------------
 
@@ -1845,7 +1936,7 @@ bpy.ops.export_scene.gltf(filepath=r'{destino}', export_format='GLB', export_app
             safe_log(self.logbox, f"✗ ERROR: Tiempo de espera agotado en conversión con Blender para {os.path.basename(origen)}")
             raise # Re-lanzar para que el error sea manejado por el llamador
         except Exception as e:
-            safe_log(logbox, f"✗ ERROR en conversión con Blender: {e}")
+            safe_log(self.logbox, f"✗ ERROR en conversión con Blender: {e}")
             raise # Re-lanzar para que el error sea manejado por el llamador
         finally:
             if os.path.exists(temp_script):
@@ -1941,25 +2032,27 @@ bpy.ops.export_scene.gltf(filepath=r'{destino}', export_format='GLB', export_app
         Coordina la preparación del proyecto Capacitor, la generación de íconos,
         la actualización de configuraciones de Android y la compilación de Gradle.
         """
-        # Verificación inicial de espacio
-        if not verificar_espacio_disco(self.logbox):
-            safe_log(self.logbox, "✗ ADVERTENCIA: Poco espacio en disco disponible")
-            respuesta = messagebox.askyesno("Espacio Insuficiente", 
-                "Se detectó poco espacio en disco. ¿Desea continuar de todos modos?")
-            if not respuesta:
-                return
-        
-        diagnosticar_espacio_disco(self.logbox)
-
         nombre = limpiar_nombre(self.nombre_libro.get().strip())
-        libro_dir = os.path.join(PAQUETES_DIR, nombre)
-        
         if not nombre:
             messagebox.showerror("Error", "El nombre del paquete está vacío.")
             return
 
+        # 1. Preparar el proyecto limpio desde la plantilla ANTES de cualquier otra cosa.
         preparar_proyecto_capacitor(self.logbox)
-        
+
+        # 2. Ahora que el proyecto existe, verificar el espacio y configurar si es necesario.
+        if not verificar_espacio_disco(self.logbox):
+            safe_log(self.logbox, "⚠ Configurando automáticamente Gradle para usar disco D...")
+            if not configurar_gradle_en_disco_d(self.logbox, nombre):
+                messagebox.showerror("Error", "No se pudo configurar Gradle para usar disco D")
+                return
+            else:
+                safe_log(self.logbox, "✓ La configuración de Gradle para usar el disco D parece haber funcionado.")
+
+        # 3. Realizar el resto de las operaciones sobre el proyecto ya copiado y configurado.
+        diagnosticar_espacio_disco(self.logbox)
+
+        libro_dir = os.path.join(PAQUETES_DIR, nombre)
         if not os.path.exists(libro_dir):
              messagebox.showerror("Error", f"No se encontró el paquete de contenido para '{nombre}'. Por favor, 'Generar Paquete' primero.")
              return
@@ -2003,8 +2096,8 @@ bpy.ops.export_scene.gltf(filepath=r'{destino}', export_format='GLB', export_app
             subprocess.run("npm install", cwd=PROJECT_DIR, check=True, shell=True, capture_output=True, text=True)
             safe_log(self.logbox, "✓ Dependencias de npm instaladas.")
             
-            # Usar la nueva función corregida
-            apk_path = compilar_apk_con_limpieza_espacio(self.logbox, nombre_paquete_limpio)
+            # Usar la nueva función para compilar usando el disco D
+            apk_path = compilar_apk_usando_disco_d(self.logbox, nombre_paquete_limpio)
 
             if apk_path:
                 final_apk_dest_dir = os.path.join(OUTPUT_APK_DIR, nombre_paquete_limpio)
@@ -2084,132 +2177,7 @@ bpy.ops.export_scene.gltf(filepath=r'{destino}', export_format='GLB', export_app
             self.set_progress("Error al iniciar ngrok.", "red")
             messagebox.showerror("Error de Ngrok", f"No se pudo iniciar ngrok. Asegúrate de que esté configurado correctamente.\nError: {e}")
 
-def generar_network_security_config(logbox, backend_host):
-    """
-    Genera el archivo network_security_config.xml para permitir tráfico HTTPS al host del backend.
-    """
-    network_security_dir = os.path.join(ANDROID_DIR, "app", "src", "main", "res", "xml")
-    network_security_file = os.path.join(network_security_dir, "network_security_config.xml")
-    
-    os.makedirs(network_security_dir, exist_ok=True)
-    
-    network_security_content = f"""<?xml version="1.0" encoding="utf-8"?>
-<network-security-config>
-    <domain-config>
-        <domain includeSubdomains="true">{backend_host}</domain>
-        <trust-anchors>
-            <certificates src="system" />
-        </trust-anchors>
-    </domain-config>
-</network-security-config>
-"""
-    try:
-        with open(network_security_file, "w", encoding="utf-8") as f:
-            f.write(network_security_content)
-        safe_log(logbox, f"✓ network_security_config.xml generado en: {network_security_file}")
-    except Exception as e:
-        safe_log(logbox, f"✗ ERROR al generar network_security_config.xml: {e}")
-        raise
-
-def configurar_gradle_build(logbox, nombre_paquete_limpio):
-    '''
-    Configura el archivo build.gradle (Module: app) con las dependencias y configuraciones correctas para AR.
-    '''
-    gradle_file = os.path.join(ANDROID_DIR, "app", "build.gradle")
-    
-    # El applicationId debe coincidir con el del Manifest y capacitor.config.json
-    application_id = f"com.libros3dar.{nombre_paquete_limpio}"
-
-    gradle_content = f'''apply plugin: 'com.android.application'
-
-android {{
-    namespace "{application_id}"
-    compileSdkVersion 34
-    defaultConfig {{
-        applicationId "{application_id}"
-        minSdkVersion 24
-        targetSdkVersion 34
-        versionCode 1
-        versionName "1.0"
-        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
-    }}
-    buildTypes {{
-        release {{
-            minifyEnabled false
-            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-        }}
-    }}
-    compileOptions {{
-        sourceCompatibility JavaVersion.VERSION_1_8
-        targetCompatibility JavaVersion.VERSION_1_8
-    }}
-    packagingOptions {{
-        exclude 'META-INF/DEPENDENCIES'
-        exclude 'META-INF/LICENSE'
-        exclude 'META-INF/LICENSE.txt'
-        exclude 'META-INF/license.txt'
-        exclude 'META-INF/NOTICE'
-        exclude 'META-INF/NOTICE.txt'
-        exclude 'META-INF/notice.txt'
-        exclude 'META-INF/ASL2.0'
-        exclude("META-INF/*.kotlin_module")
-    }}
-}}
-
-repositories {{
-    google()
-    mavenCentral()
-}}
-
-dependencies {{
-    implementation fileTree(dir: 'libs', include: ['*.jar'])
-    implementation 'androidx.appcompat:appcompat:1.6.1'
-    implementation project(':capacitor-android')
-    testImplementation 'junit:junit:4.13.2'
-    androidTestImplementation 'androidx.test.ext:junit:1.1.5'
-    androidTestImplementation 'androidx.test.espresso:espresso-core:3.5.1'
-    implementation 'androidx.webkit:webkit:1.7.0'
-}}
-'''
-    
-    try:
-        with open(gradle_file, 'w', encoding='utf-8') as f:
-            f.write(gradle_content)
-        safe_log(logbox, "✓ build.gradle configurado correctamente con dependencias AR.")
-    except Exception as e:
-        safe_log(logbox, f"✗ ERROR configurando build.gradle: {e}")
-        raise
-
-def ensure_capacitor_js(logbox, project_dir):
-    """
-    Verifica si capacitor.js existe en la carpeta www y, si no, lo copia desde node_modules.
-    """
-    www_dir = os.path.join(project_dir, "www")
-    capacitor_js_path = os.path.join(www_dir, "capacitor.js")
-    
-    if os.path.exists(capacitor_js_path):
-        safe_log(logbox, "✓ capacitor.js ya existe en www.")
-        return
-
-    safe_log(logbox, "ADVERTENCIA: capacitor.js no encontrado en www. Intentando copia manual...")
-    
-    src_capacitor_js = os.path.join(project_dir, "node_modules", "@capacitor", "core", "dist", "capacitor.js")
-    
-    if not os.path.exists(src_capacitor_js):
-        safe_log(logbox, "✗ ERROR: No se pudo encontrar el archivo fuente de capacitor.js en node_modules.")
-        messagebox.showerror("Error Crítico", "No se encontró capacitor.js en node_modules. El APK no funcionará. Ejecuta 'npm install' en la carpeta del proyecto.")
-        return
-
-    try:
-        shutil.copy2(src_capacitor_js, capacitor_js_path)
-        safe_log(logbox, "✓ Copia manual de capacitor.js a www exitosa.")
-    except Exception as e:
-        safe_log(logbox, f"✗ ERROR: Fallo al copiar manualmente capacitor.js: {e}")
-        messagebox.showerror("Error de Copia", f"No se pudo copiar capacitor.js: {e}")
-
-
 if __name__ == "__main__":
     root = Tk()
     app = GeneradorGUI(root)
     root.mainloop()
-
