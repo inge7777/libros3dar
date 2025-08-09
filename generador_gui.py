@@ -76,6 +76,79 @@ def limpiar_nombre(nombre: str) -> str:
     # Limita la longitud para evitar problemas en sistemas de archivos o Android
     return s[:50]
 
+def get_package_name(nombre_limpio):
+    return f"com.libros3dar.{nombre_limpio.lower()}"
+
+def preparar_rutas_java(package_name):
+    java_dir = os.path.join(ANDROID_DIR, "app", "src", "main", "java", *package_name.split('.'))
+    os.makedirs(java_dir, exist_ok=True)
+    return os.path.join(java_dir, "MainActivity.java")
+
+def crear_main_activity(package_name):
+    ruta = preparar_rutas_java(package_name)
+    codigo = f"""package {package_name};
+import com.getcapacitor.BridgeActivity;
+public class MainActivity extends BridgeActivity {{
+}}
+"""
+    with open(ruta, "w", encoding="utf-8") as f:
+        f.write(codigo)
+    return ruta
+
+def actualizar_capacitor_config(logbox, package_name, app_name):
+    config_path = os.path.join(PROJECT_DIR, "capacitor.config.json")
+    try:
+        if os.path.exists(config_path):
+            with open(config_path, "r", encoding="utf-8") as f:
+                config = json.load(f)
+        else:
+            config = {{}}
+        
+        config["appId"] = package_name
+        config["appName"] = app_name
+        if "webDir" not in config:
+             config["webDir"] = "www"
+
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(config, f, indent=2)
+        safe_log(logbox, f"✓ capacitor.config.json actualizado con appId: {package_name}")
+    except Exception as e:
+        safe_log(logbox, f"✗ ERROR actualizando capacitor.config.json: {e}")
+
+def set_gradle_namespace(logbox, package_name):
+    build_gradle_path = os.path.join(ANDROID_DIR, "app", "build.gradle")
+    if not os.path.exists(build_gradle_path):
+        safe_log(logbox, f"✗ ERROR: No se encuentra {build_gradle_path}")
+        return False
+    with open(build_gradle_path, "r", encoding="utf-8") as f:
+        lines = f.readlines()
+    
+    new_lines = []
+    namespace_found = False
+    # Check if namespace is already present and replace it
+    if any("namespace" in line for line in lines):
+        for line in lines:
+            if line.strip().startswith("namespace"):
+                new_lines.append(f'    namespace "{package_name}"\n')
+                namespace_found = True
+            else:
+                new_lines.append(line)
+    
+    # If not present, add it
+    if not namespace_found:
+        final_lines = []
+        for line in lines:
+            final_lines.append(line)
+            if "android {" in line.strip():
+                final_lines.append(f'    namespace "{package_name}"\n')
+        new_lines = final_lines
+
+    with open(build_gradle_path, "w", encoding="utf-8") as f:
+        f.writelines(new_lines)
+
+    safe_log(logbox, f"✓ build.gradle actualizado con namespace: {package_name}")
+    return True
+
 def safe_log(logbox, msg: str):
     """
     Escribe mensajes en el cuadro de log de la GUI con un timestamp,
@@ -970,93 +1043,58 @@ android.suppressUnsupportedCompileSdk=34
         safe_log(logbox, f"✗ ERROR CRÍTICO en compilar_apk_usando_disco_d: {e}")
         return None
 
-def generar_main_activity_simple(logbox, nombre_paquete_limpio, backend_url):
-    """
-    Genera MainActivity.java usando un template simple y confiable
-    """
-    try:
-        # Crear estructura de directorios
-        package_path = ["com", "libros3dar", nombre_paquete_limpio]
-        current_dir = os.path.join(ANDROID_DIR, "app", "src", "main", "java")
-        for folder in package_path:
-            current_dir = os.path.join(current_dir, folder)
-            os.makedirs(current_dir, exist_ok=True)
-
-        main_activity_path = os.path.join(current_dir, "MainActivity.java")
-
-        # Template simple sin placeholders problemáticos
-        main_activity_content = f"""package com.libros3dar.{nombre_paquete_limpio};
+def configurar_webview_camera_completo(logbox, android_dir_arg, nombre_paquete_limpio):
+    package_name = f"com.libros3dar.{nombre_paquete_limpio}"
+    
+    java_base_dir = os.path.join(android_dir_arg, "app", "src", "main", "java")
+    target_package_full_path = os.path.join(java_base_dir, *package_name.split('.'))
+    os.makedirs(target_package_full_path, exist_ok=True)
+    
+    main_activity_content = f'''package {package_name};
 
 import android.os.Bundle;
+import android.webkit.PermissionRequest;
+import android.webkit.WebChromeClient;
 import com.getcapacitor.BridgeActivity;
 
 public class MainActivity extends BridgeActivity {{
     @Override
     public void onCreate(Bundle savedInstanceState) {{
         super.onCreate(savedInstanceState);
+        
+        // Configurar WebChromeClient para permisos de cámara y micrófono
+        this.bridge.getWebView().setWebChromeClient(new WebChromeClient() {{
+            @Override
+            public void onPermissionRequest(final PermissionRequest request) {{
+                runOnUiThread(() -> {{
+                    String[] resources = request.getResources();
+                    boolean hasCamera = false;
+                    boolean hasMicrophone = false;
+                    
+                    for (String resource : resources) {{
+                        if (PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(resource)) {{
+                            hasCamera = true;
+                        }} else if (PermissionRequest.RESOURCE_AUDIO_CAPTURE.equals(resource)) {{
+                            hasMicrophone = true;
+                        }}
+                    }}
+                    
+                    if (hasCamera || hasMicrophone) {{
+                        // Conceder ambos permisos si se solicitan para simplificar
+                        request.grant(request.getResources());
+                    }} else {{
+                        request.deny();
+                    }}
+                }});
+            }}
+        }});
     }}
-}}"""
-
-        # Escribir archivo
-        with open(main_activity_path, 'w', encoding='utf-8') as f:
-            f.write(main_activity_content)
-
-        # Verificación inmediata
-        if os.path.exists(main_activity_path):
-            size = os.path.getsize(main_activity_path)
-            safe_log(logbox, f"✓ MainActivity.java creada: {main_activity_path} ({size} bytes)")
-            
-            # Verificar contenido
-            with open(main_activity_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-                if f"package com.libros3dar.{nombre_paquete_limpio};" in content:
-                    safe_log(logbox, "✓ Package name verificado en MainActivity.java")
-                    return True
-                else:
-                    safe_log(logbox, "✗ ERROR: Package name incorrecto en MainActivity.java")
-                    return False
-        else:
-            safe_log(logbox, "✗ Error: MainActivity.java no se creó")
-            return False
-
-    except Exception as e:
-        safe_log(logbox, f"✗ Error creando MainActivity: {e}")
-        return False
-
-
-def verificar_archivos_android_critical(logbox, nombre_paquete_limpio):
-    """
-    Verificación crítica antes de compilar APK
-    """
-    archivos_criticos = {
-        "MainActivity.java": os.path.join(ANDROID_DIR, "app", "src", "main", "java", "com", "libros3dar", nombre_paquete_limpio, "MainActivity.java"),
-        "AndroidManifest.xml": os.path.join(ANDROID_DIR, "app", "src", "main", "AndroidManifest.xml"),
-        "build.gradle (app)": os.path.join(ANDROID_DIR, "app", "build.gradle"),
-        "capacitor.config.json": os.path.join(PROJECT_DIR, "capacitor.config.json")
-    }
-
-    safe_log(logbox, "=== VERIFICACIÓN CRÍTICA DE ARCHIVOS ===")
-    todos_ok = True
-
-    for nombre, ruta in archivos_criticos.items():
-        if os.path.exists(ruta):
-            size = os.path.getsize(ruta)
-            safe_log(logbox, f" ✓ {nombre}: {size} bytes - OK")
-            
-            # Verificación específica para MainActivity
-            if nombre == "MainActivity.java":
-                with open(ruta, 'r', encoding='utf-8') as f:
-                    content = f.read()
-                    if f"package com.libros3dar.{nombre_paquete_limpio};" in content:
-                        safe_log(logbox, "   ✓ Package correcto en MainActivity")
-                    else:
-                        safe_log(logbox, "   ✗ Package incorrecto en MainActivity")
-                        todos_ok = False
-        else:
-            safe_log(logbox, f" ✗ {nombre}: NO EXISTE")
-            todos_ok = False
-
-    return todos_ok
+}}'''
+    
+    main_activity_path = os.path.join(target_package_full_path, "MainActivity.java")
+    with open(main_activity_path, "w", encoding="utf-8") as f:
+        f.write(main_activity_content)
+    safe_log(logbox, f"✓ MainActivity.java (con WebChromeClient) configurado en: {main_activity_path}")
 
 
 def actualizar_paquete_main_activity(logbox, android_package_name):
@@ -1488,7 +1526,6 @@ class GeneradorGUI:
             # 4. Actualizar config de Capacitor
             config_path = os.path.join(PROJECT_DIR, "capacitor.config.json")
             capacitor_config = {
-                "appId": f"com.libros3dar.{nombre}",
                 "appName": self.nombre_libro.get().strip(),
                 "webDir": "www",
                 "bundledWebRuntime": False,
@@ -2099,19 +2136,27 @@ bpy.ops.export_scene.gltf(filepath=r'{destino}', export_format='GLB', export_app
         safe_log(self.logbox, f"✓ Contenido web copiado a '{capacitor_www_dir}'.")
         
         try:
+            # --- LÓGICA UNIFICADA Y DEFINITIVA PARA CONFIGURAR PAQUETE ---
+            package_name = get_package_name(nombre)
+            app_name = self.nombre_libro.get().strip()
+            safe_log(self.logbox, f"✓ Usando packageName unificado: {package_name}")
+
+            # 1. Crear MainActivity.java
+            crear_main_activity(package_name)
+
+            # 2. Actualizar capacitor.config.json
+            actualizar_capacitor_config(self.logbox, package_name, app_name)
+            
+            # 3. Establecer el namespace en build.gradle
+            set_gradle_namespace(self.logbox, package_name)
+
+            # 4. Sobrescribir AndroidManifest con una plantilla limpia y válida
+            corregir_android_manifest(self.logbox, nombre)
+
+            # 5. Lógica restante de configuración
             backend_url_gui = self.backend_url.get().strip()
             backend_host = re.search(r'https?://([^:/]+)', backend_url_gui).group(1) if re.search(r'https?://([^:/]+)', backend_url_gui) else None
-            
             crear_archivos_adicionales_android(self.logbox, backend_host)
-            
-            # USAR LA FUNCIÓN SIMPLE Y VERIFICAR
-            if not generar_main_activity_simple(self.logbox, nombre, backend_url_gui):
-                raise Exception("No se pudo crear MainActivity.java")
-        
-            # VERIFICACIÓN CRÍTICA ANTES DE COMPILAR
-            if not verificar_archivos_android_critical(self.logbox, nombre):
-                raise Exception("Verificación de archivos críticos falló. Abortando.")
-
             self.generar_iconos()
             
         except Exception as e:
@@ -2135,6 +2180,20 @@ bpy.ops.export_scene.gltf(filepath=r'{destino}', export_format='GLB', export_app
         safe_log(self.logbox, "======== INICIANDO FLUJO DE BUILD DE APK ========")
 
         try:
+            # --- LIMPIEZA PROFUNDA ---
+            dirs_a_borrar = [
+                os.path.join(ANDROID_DIR, "app", "build"),
+                os.path.join(ANDROID_DIR, "build"),
+                os.path.join(ANDROID_DIR, ".gradle")
+            ]
+            for d in dirs_a_borrar:
+                if os.path.exists(d):
+                    try:
+                        shutil.rmtree(d)
+                    except Exception as e:
+                        safe_log(self.logbox, f"ADVERTENCIA: No se pudo borrar {d}: {e}")
+            safe_log(self.logbox, "✓ Limpieza profunda de carpetas de build y caché de Gradle completada.")
+
             safe_log(self.logbox, "Ejecutando 'npm install'...")
             subprocess.run("npm install", cwd=PROJECT_DIR, check=True, shell=True, capture_output=True, text=True)
             safe_log(self.logbox, "✓ Dependencias de npm instaladas.")
