@@ -970,58 +970,93 @@ android.suppressUnsupportedCompileSdk=34
         safe_log(logbox, f"✗ ERROR CRÍTICO en compilar_apk_usando_disco_d: {e}")
         return None
 
-def configurar_webview_camera_completo(logbox, android_dir_arg, nombre_paquete_limpio):
-    package_name = f"com.libros3dar.{nombre_paquete_limpio}"
-    
-    java_base_dir = os.path.join(android_dir_arg, "app", "src", "main", "java")
-    target_package_full_path = os.path.join(java_base_dir, *package_name.split('.'))
-    os.makedirs(target_package_full_path, exist_ok=True)
-    
-    main_activity_content = f'''package {package_name};
+def generar_main_activity_simple(logbox, nombre_paquete_limpio, backend_url):
+    """
+    Genera MainActivity.java usando un template simple y confiable
+    """
+    try:
+        # Crear estructura de directorios
+        package_path = ["com", "libros3dar", nombre_paquete_limpio]
+        current_dir = os.path.join(ANDROID_DIR, "app", "src", "main", "java")
+        for folder in package_path:
+            current_dir = os.path.join(current_dir, folder)
+            os.makedirs(current_dir, exist_ok=True)
+
+        main_activity_path = os.path.join(current_dir, "MainActivity.java")
+
+        # Template simple sin placeholders problemáticos
+        main_activity_content = f"""package com.libros3dar.{nombre_paquete_limpio};
 
 import android.os.Bundle;
-import android.webkit.PermissionRequest;
-import android.webkit.WebChromeClient;
 import com.getcapacitor.BridgeActivity;
 
 public class MainActivity extends BridgeActivity {{
     @Override
     public void onCreate(Bundle savedInstanceState) {{
         super.onCreate(savedInstanceState);
-        
-        // Configurar WebChromeClient para permisos de cámara y micrófono
-        this.bridge.getWebView().setWebChromeClient(new WebChromeClient() {{
-            @Override
-            public void onPermissionRequest(final PermissionRequest request) {{
-                runOnUiThread(() -> {{
-                    String[] resources = request.getResources();
-                    boolean hasCamera = false;
-                    boolean hasMicrophone = false;
-                    
-                    for (String resource : resources) {{
-                        if (PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(resource)) {{
-                            hasCamera = true;
-                        }} else if (PermissionRequest.RESOURCE_AUDIO_CAPTURE.equals(resource)) {{
-                            hasMicrophone = true;
-                        }}
-                    }}
-                    
-                    if (hasCamera || hasMicrophone) {{
-                        // Conceder ambos permisos si se solicitan para simplificar
-                        request.grant(request.getResources());
-                    }} else {{
-                        request.deny();
-                    }}
-                }});
-            }}
-        }});
     }}
-}}'''
-    
-    main_activity_path = os.path.join(target_package_full_path, "MainActivity.java")
-    with open(main_activity_path, "w", encoding="utf-8") as f:
-        f.write(main_activity_content)
-    safe_log(logbox, f"✓ MainActivity.java (con WebChromeClient) configurado en: {main_activity_path}")
+}}"""
+
+        # Escribir archivo
+        with open(main_activity_path, 'w', encoding='utf-8') as f:
+            f.write(main_activity_content)
+
+        # Verificación inmediata
+        if os.path.exists(main_activity_path):
+            size = os.path.getsize(main_activity_path)
+            safe_log(logbox, f"✓ MainActivity.java creada: {main_activity_path} ({size} bytes)")
+            
+            # Verificar contenido
+            with open(main_activity_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+                if f"package com.libros3dar.{nombre_paquete_limpio};" in content:
+                    safe_log(logbox, "✓ Package name verificado en MainActivity.java")
+                    return True
+                else:
+                    safe_log(logbox, "✗ ERROR: Package name incorrecto en MainActivity.java")
+                    return False
+        else:
+            safe_log(logbox, "✗ Error: MainActivity.java no se creó")
+            return False
+
+    except Exception as e:
+        safe_log(logbox, f"✗ Error creando MainActivity: {e}")
+        return False
+
+
+def verificar_archivos_android_critical(logbox, nombre_paquete_limpio):
+    """
+    Verificación crítica antes de compilar APK
+    """
+    archivos_criticos = {
+        "MainActivity.java": os.path.join(ANDROID_DIR, "app", "src", "main", "java", "com", "libros3dar", nombre_paquete_limpio, "MainActivity.java"),
+        "AndroidManifest.xml": os.path.join(ANDROID_DIR, "app", "src", "main", "AndroidManifest.xml"),
+        "build.gradle (app)": os.path.join(ANDROID_DIR, "app", "build.gradle"),
+        "capacitor.config.json": os.path.join(PROJECT_DIR, "capacitor.config.json")
+    }
+
+    safe_log(logbox, "=== VERIFICACIÓN CRÍTICA DE ARCHIVOS ===")
+    todos_ok = True
+
+    for nombre, ruta in archivos_criticos.items():
+        if os.path.exists(ruta):
+            size = os.path.getsize(ruta)
+            safe_log(logbox, f" ✓ {nombre}: {size} bytes - OK")
+            
+            # Verificación específica para MainActivity
+            if nombre == "MainActivity.java":
+                with open(ruta, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                    if f"package com.libros3dar.{nombre_paquete_limpio};" in content:
+                        safe_log(logbox, "   ✓ Package correcto en MainActivity")
+                    else:
+                        safe_log(logbox, "   ✗ Package incorrecto en MainActivity")
+                        todos_ok = False
+        else:
+            safe_log(logbox, f" ✗ {nombre}: NO EXISTE")
+            todos_ok = False
+
+    return todos_ok
 
 
 def actualizar_paquete_main_activity(logbox, android_package_name):
@@ -2068,7 +2103,15 @@ bpy.ops.export_scene.gltf(filepath=r'{destino}', export_format='GLB', export_app
             backend_host = re.search(r'https?://([^:/]+)', backend_url_gui).group(1) if re.search(r'https?://([^:/]+)', backend_url_gui) else None
             
             crear_archivos_adicionales_android(self.logbox, backend_host)
-            configurar_webview_camera_completo(self.logbox, ANDROID_DIR, nombre)
+            
+            # USAR LA FUNCIÓN SIMPLE Y VERIFICAR
+            if not generar_main_activity_simple(self.logbox, nombre, backend_url_gui):
+                raise Exception("No se pudo crear MainActivity.java")
+        
+            # VERIFICACIÓN CRÍTICA ANTES DE COMPILAR
+            if not verificar_archivos_android_critical(self.logbox, nombre):
+                raise Exception("Verificación de archivos críticos falló. Abortando.")
+
             self.generar_iconos()
             
         except Exception as e:
