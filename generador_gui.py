@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import os
 import shutil
+import sys
 import uuid
 import subprocess
 import re
@@ -13,6 +14,22 @@ import requests # Importar requests
 from tkinter import Tk, Frame, Label, Entry, Button, Listbox, Scrollbar, Text, StringVar, filedialog, messagebox, END, LEFT, RIGHT, BOTH, Y, VERTICAL, NORMAL, DISABLED, Toplevel
 from PIL import Image, ImageOps, ImageDraw # Importar ImageOps y ImageDraw
 from string import Template # Importar Template para el manejo de plantillas HTML
+
+# --- Dependencias con autoinstalación ---
+try:
+    from flask import Flask, send_from_directory, jsonify
+    from pyngrok import ngrok
+    import cv2
+    import numpy as np
+    import psutil # Para verificar el espacio en disco
+except ImportError:
+    print("Dependencias críticas no encontradas. Intentando instalar...")
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "Flask", "pyngrok", "opencv-python", "numpy", "Pillow", "psutil"])
+    from flask import Flask, send_from_directory, jsonify
+    from pyngrok import ngrok
+    import cv2
+    import numpy as np
+    import psutil
 
 # ---------------- RUTAS BASE ----------------
 # Directorio base donde se encuentran todos los proyectos y salidas
@@ -199,45 +216,45 @@ def insertar_claves_en_backend(logbox, claves: list):
         raise Exception(f"Error insertando claves en SQLite: {e}")
 
 def corregir_android_manifest(logbox, nombre_paquete_limpio):
-    """
+    '''
     Reconstruye AndroidManifest.xml con todos los permisos y features necesarios para AR.
-    """
+    '''
     if not os.path.exists(os.path.dirname(ANDROID_MANIFEST)):
         safe_log(logbox, f"Error: El directorio para AndroidManifest.xml no existe. Abortando.")
         return
 
-    # Permisos necesarios para AR y WebRTC
-    required_permissions = [
-        "android.permission.INTERNET",
-        "android.permission.CAMERA", 
-        "android.permission.RECORD_AUDIO",
-        "android.permission.MODIFY_AUDIO_SETTINGS",
-        "android.permission.ACCESS_NETWORK_STATE",
-        "android.permission.WRITE_EXTERNAL_STORAGE",
-        "android.permission.READ_EXTERNAL_STORAGE",
-        "android.permission.READ_MEDIA_IMAGES"
-    ]
-    
-    # Features de hardware necesarias
-    hardware_features = [
-        'android.hardware.camera',
-        'android.hardware.camera.autofocus',
-        'android.hardware.camera.front'
-    ]
-
     manifest_content = f'''<?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.libros3dar.{nombre_paquete_limpio}">
+
+    <!-- Permisos necesarios para AR y WebRTC -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
+
+    <!-- Features de hardware -->
+    <uses-feature android:name="android.hardware.camera" android:required="true" />
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.front" android:required="false" />
+    <uses-feature android:glEsVersion="0x00020000" android:required="true" />
 
     <application
         android:allowBackup="true"
-        android:hardwareAccelerated="true"
-        android:usesCleartextTraffic="true"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
-        android:theme="@style/AppTheme">
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:theme="@style/AppTheme"
+        android:usesCleartextTraffic="true"
+        android:networkSecurityConfig="@xml/network_security_config"
+        android:hardwareAccelerated="true">
 
         <activity
-            android:name="com.libros3dar.{nombre_paquete_limpio}.MainActivity"
+            android:name=".MainActivity"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode"
             android:exported="true"
             android:launchMode="singleTask"
             android:theme="@style/AppTheme.NoActionBarLaunch">
@@ -256,31 +273,13 @@ def corregir_android_manifest(logbox, nombre_paquete_limpio):
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
         </provider>
-        
     </application>
-
-    <!-- Permisos para AR y Cámara -->
-'''
-    
-    for permission in required_permissions:
-        if "STORAGE" in permission:
-             manifest_content += f'    <uses-permission android:name="{permission}" android:maxSdkVersion="32" />\n'
-        else:
-             manifest_content += f'    <uses-permission android:name="{permission}" />\n'
-    
-    manifest_content += '\n    <!-- Características de Hardware -->\n'
-    
-    for feature in hardware_features:
-        required = "true" if feature == "android.hardware.camera" else "false"
-        manifest_content += f'    <uses-feature android:name="{feature}" android:required="{required}" />\n'
-    
-    manifest_content += '    <uses-feature android:glEsVersion="0x00020000" android:required="true" />\n'
-    manifest_content += '\n</manifest>'
+</manifest>'''
 
     try:
         with open(ANDROID_MANIFEST, 'w', encoding='utf-8') as f:
             f.write(manifest_content)
-        safe_log(logbox, f"✓ AndroidManifest.xml actualizado con permisos AR completos")
+        safe_log(logbox, f"✓ AndroidManifest.xml corregido para: {nombre_paquete_limpio}")
     except Exception as e:
         safe_log(logbox, f"✗ ERROR escribiendo AndroidManifest.xml: {e}")
         raise
@@ -306,6 +305,473 @@ def update_strings_xml(logbox, nombre: str):
         safe_log(logbox, f"✗ ERROR al actualizar strings.xml: {e}")
         raise
 
+def crear_archivos_adicionales_android(logbox, backend_host=None):
+    '''
+    Crea archivos XML adicionales necesarios para la configuración de Android.
+    '''
+    xml_dir = os.path.join(ANDROID_DIR, "app", "src", "main", "res", "xml")
+    os.makedirs(xml_dir, exist_ok=True)
+    
+    # 1. Crear file_paths.xml
+    file_paths_content = '''<?xml version="1.0" encoding="utf-8"?>
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <external-files-path name="my_images" path="Pictures" />
+    <external-files-path name="my_movies" path="Movies" />
+    <cache-path name="my_cache" path="." />
+    <external-path name="external_files" path="."/>
+    <files-path name="files" path="."/>
+</paths>'''
+    
+    try:
+        with open(os.path.join(xml_dir, "file_paths.xml"), 'w', encoding='utf-8') as f:
+            f.write(file_paths_content)
+        safe_log(logbox, "✓ file_paths.xml creado")
+    except Exception as e:
+        safe_log(logbox, f"✗ ERROR creando file_paths.xml: {e}")
+        raise
+
+    # 2. Crear network_security_config.xml dinámicamente
+    domain_configs = '''
+        <domain includeSubdomains="true">localhost</domain>
+        <domain includeSubdomains="true">10.0.2.2</domain> 
+        <domain includeSubdomains="true">127.0.0.1</domain>
+    '''
+    if backend_host:
+        # Añadir el host del backend (ej. ngrok) para permitir la conexión
+        domain_configs += f'\n        <domain includeSubdomains="true">{backend_host}</domain>'
+
+    network_security_content = f'''<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">{domain_configs}
+    </domain-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system"/>
+            <certificates src="user"/>
+        </trust-anchors>
+    </base-config>
+</network-security-config>'''
+    
+    try:
+        with open(os.path.join(xml_dir, "network_security_config.xml"), 'w', encoding='utf-8') as f:
+            f.write(network_security_content)
+        safe_log(logbox, f"✓ network_security_config.xml creado para {backend_host or 'desarrollo local'}.")
+    except Exception as e:
+        safe_log(logbox, f"✗ ERROR creando network_security_config.xml: {e}")
+        raise
+
+# --- Funciones robustas para generación de marcadores y compilación ---
+
+NFT_CREATOR_PATH = os.path.join(BASE_DIR, "tools", "NFT-Marker-Creator")
+
+def verificar_nft_marker_creator(logbox):
+    if not os.path.exists(NFT_CREATOR_PATH):
+        safe_log(logbox, "ADVERTENCIA: Directorio de NFT-Marker-Creator no encontrado.")
+        return False
+    
+    main_script_path = os.path.join(NFT_CREATOR_PATH, "MarkerCreator.js")
+    alt_script_path = os.path.join(NFT_CREATOR_PATH, "src", "NFTMarkerCreator.js")
+    
+    if not os.path.exists(main_script_path) and not os.path.exists(alt_script_path):
+        safe_log(logbox, "ADVERTENCIA: Script principal de NFT-Marker-Creator no encontrado.")
+        return False
+
+    try:
+        result = subprocess.run(["node", "--version"], cwd=NFT_CREATOR_PATH, capture_output=True, text=True, shell=True, check=True)
+        safe_log(logbox, f"✓ NFT-Marker-Creator verificado con Node.js {result.stdout.strip()}")
+        return True
+    except Exception as e:
+        safe_log(logbox, f"✗ Error verificando NFT-Marker-Creator: {e}")
+        return False
+
+def generar_marcador_nft(logbox, imagen_path, nombre_marcador):
+    if not verificar_nft_marker_creator(logbox):
+        return False
+    
+    try:
+        script_path = os.path.join(NFT_CREATOR_PATH, "MarkerCreator.js")
+        if not os.path.exists(script_path):
+            script_path = os.path.join(NFT_CREATOR_PATH, "src", "NFTMarkerCreator.js")
+
+        imagen_absoluta = os.path.abspath(imagen_path)
+        cmd = ["node", os.path.basename(script_path), "-i", imagen_absoluta]
+        
+        safe_log(logbox, f"Ejecutando: {' '.join(cmd)}")
+        result = subprocess.run(cmd, cwd=NFT_CREATOR_PATH, capture_output=True, text=True, shell=True, timeout=180)
+        
+        if result.returncode == 0 and "error" not in result.stderr.lower():
+            output_dir = os.path.join(WWW_DIR, "assets", "markers")
+            os.makedirs(output_dir, exist_ok=True)
+            archivos_movidos = 0
+            base_name = os.path.splitext(os.path.basename(imagen_path))[0]
+            for ext in ['.fset', '.fset3', '.iset']:
+                src_file = os.path.join(NFT_CREATOR_PATH, base_name + ext)
+                if os.path.exists(src_file):
+                    dst_file = os.path.join(output_dir, f"{nombre_marcador}{ext}")
+                    shutil.move(src_file, dst_file)
+                    safe_log(logbox, f"✓ Archivo NFT movido: {dst_file}")
+                    archivos_movidos += 1
+            return archivos_movidos > 0
+        else:
+            safe_log(logbox, f"✗ Error en NFT-Marker-Creator: {result.stderr or result.stdout}")
+            return False
+    except Exception as e:
+        safe_log(logbox, f"✗ Error crítico generando marcador NFT: {e}")
+        return False
+
+def generar_patt_opencv(logbox, imagen_path, patron_path):
+    try:
+        img = cv2.imread(imagen_path, cv2.IMREAD_GRAYSCALE)
+        if img is None: raise IOError(f"No se pudo cargar la imagen con OpenCV: {imagen_path}")
+        img_resized = cv2.resize(img, (16, 16), interpolation=cv2.INTER_AREA)
+        patt_content = ""
+        for _ in range(3):
+            for row in img_resized:
+                patt_content += " ".join(f"{val:3d}" for val in row) + "\n"
+            patt_content += "\n"
+        with open(patron_path, 'w', encoding='utf-8') as f:
+            f.write(patt_content.strip())
+        safe_log(logbox, f"✓ Patrón .patt generado con OpenCV para: {os.path.basename(imagen_path)}")
+        return True
+    except Exception as e:
+        safe_log(logbox, f"✗ Error generando .patt con OpenCV: {e}")
+        return False
+
+def diagnosticar_espacio_disco(logbox):
+    '''
+    Diagnostica en detalle el uso de espacio en disco
+    '''
+    import psutil
+    
+    try:
+        safe_log(logbox, "=== DIAGNÓSTICO DE ESPACIO EN DISCO ===")
+        
+        # Verificar discos principales
+        for letra in ['C:', 'D:']:
+            try:
+                disk = psutil.disk_usage(letra)
+                total_gb = disk.total / (1024**3)
+                used_gb = disk.used / (1024**3)
+                free_gb = disk.free / (1024**3)
+                percent_used = (used_gb / total_gb) * 100
+                
+                safe_log(logbox, f"Disco {letra}")
+                safe_log(logbox, f"  Total: {total_gb:.1f} GB")
+                safe_log(logbox, f"  Usado: {used_gb:.1f} GB ({percent_used:.1f}%)")
+                safe_log(logbox, f"  Libre: {free_gb:.1f} GB")
+                
+                if free_gb < 4:
+                    safe_log(logbox, f"  ⚠ CRÍTICO: Menos de 4GB libres")
+                elif free_gb < 8:
+                    safe_log(logbox, f"  ⚠ ADVERTENCIA: Menos de 8GB libres")
+                else:
+                    safe_log(logbox, f"  ✓ Espacio suficiente")
+                    
+            except Exception as e:
+                safe_log(logbox, f"No se pudo verificar disco {letra}: {e}")
+        
+        # Verificar directorios específicos
+        dirs_to_check = [
+            (os.path.join(os.path.expanduser("~"), ".gradle"), "Cache Gradle Usuario"),
+            (ANDROID_DIR, "Proyecto Android"),
+            (os.path.join(ANDROID_DIR, "app", "build"), "Build Directory"),
+        ]
+        
+        safe_log(logbox, "\n=== TAMAÑO DE DIRECTORIOS ===")
+        for dir_path, name in dirs_to_check:
+            if os.path.exists(dir_path):
+                try:
+                    total_size = 0
+                    for dirpath, dirnames, filenames in os.walk(dir_path):
+                        for filename in filenames:
+                            filepath = os.path.join(dirpath, filename)
+                            if os.path.exists(filepath):
+                                total_size += os.path.getsize(filepath)
+                    
+                    size_gb = total_size / (1024**3)
+                    safe_log(logbox, f"{name}: {size_gb:.2f} GB")
+                    
+                except Exception as e:
+                    safe_log(logbox, f"{name}: Error calculando tamaño - {e}")
+            else:
+                safe_log(logbox, f"{name}: No existe")
+        
+        safe_log(logbox, "=== RECOMENDACIONES ===")
+        safe_log(logbox, "1. Libere espacio en disco eliminando archivos innecesarios")
+        safe_log(logbox, "2. Considere mover el proyecto a un disco con más espacio")
+        safe_log(logbox, "3. Limpie el cache de Gradle manualmente")
+        safe_log(logbox, "4. Use 'Liberador de espacio en disco' de Windows")
+        
+    except ImportError:
+        safe_log(logbox, "Para diagnóstico completo, instale: pip install psutil")
+    except Exception as e:
+        safe_log(logbox, f"Error en diagnóstico: {e}")
+
+def verificar_espacio_disco(logbox):
+    '''
+    Verifica el espacio disponible en los discos críticos
+    '''
+    import psutil
+    
+    try:
+        # Verificar disco C: (cache de Gradle)
+        disk_c = psutil.disk_usage('C:')
+        free_gb_c = disk_c.free / (1024**3)
+        
+        # Verificar disco D: (proyecto)
+        disk_d = psutil.disk_usage('D:')
+        free_gb_d = disk_d.free / (1024**3)
+        
+        safe_log(logbox, f"Espacio libre en C: {free_gb_c:.1f} GB")
+        safe_log(logbox, f"Espacio libre en D: {free_gb_d:.1f} GB")
+        
+        # Se necesitan al menos 8GB libres para build de Android
+        if free_gb_c < 4:
+            safe_log(logbox, f"⚠ ADVERTENCIA: Poco espacio en C: ({free_gb_c:.1f} GB). Se necesitan al menos 4GB")
+            return False
+            
+        if free_gb_d < 4:
+            safe_log(logbox, f"⚠ ADVERTENCIA: Poco espacio en D: ({free_gb_d:.1f} GB). Se necesitan al menos 4GB")
+            return False
+            
+        safe_log(logbox, "✓ Espacio en disco suficiente para build")
+        return True
+        
+    except ImportError:
+        safe_log(logbox, "⚠ No se puede verificar espacio (instale psutil): pip install psutil")
+        return True
+    except Exception as e:
+        safe_log(logbox, f"⚠ Error verificando espacio en disco: {e}")
+        return True
+
+def limpiar_cache_gradle_completo(logbox):
+    '''
+    Limpia cache de Gradle de forma más agresiva para liberar espacio
+    '''
+    import glob
+    
+    try:
+        # 1. Limpiar cache local del proyecto
+        gradle_cache_project = os.path.join(ANDROID_DIR, ".gradle")
+        if os.path.exists(gradle_cache_project):
+            shutil.rmtree(gradle_cache_project)
+            safe_log(logbox, "✓ Cache local de Gradle limpiado")
+        
+        # 2. Limpiar directorio build completo
+        build_dirs = [
+            os.path.join(ANDROID_DIR, "app", "build"),
+            os.path.join(ANDROID_DIR, "build"),
+            os.path.join(PROJECT_DIR, "node_modules", ".cache")
+        ]
+        
+        for build_dir in build_dirs:
+            if os.path.exists(build_dir):
+                shutil.rmtree(build_dir)
+                safe_log(logbox, f"✓ Directorio limpiado: {os.path.basename(build_dir)}")
+        
+        # 3. Limpiar cache de usuario de Gradle (¡CUIDADO!)
+        gradle_user_cache = os.path.join(os.path.expanduser("~"), ".gradle", "caches")
+        if os.path.exists(gradle_user_cache):
+            # Solo limpiar subcaches específicos para liberar espacio
+            subcaches_to_clean = [
+                "build-cache-*",
+                "transforms-*",
+                "temp-*"
+            ]
+            
+            for pattern in subcaches_to_clean:
+                matching_dirs = glob.glob(os.path.join(gradle_user_cache, pattern))
+                for cache_dir in matching_dirs:
+                    try:
+                        shutil.rmtree(cache_dir)
+                        safe_log(logbox, f"✓ Cache limpiado: {os.path.basename(cache_dir)}")
+                    except Exception as e:
+                        safe_log(logbox, f"⚠ No se pudo limpiar {os.path.basename(cache_dir)}: {e}")
+        
+        # 4. Limpiar archivos temporales del sistema
+        import tempfile
+        temp_dir = tempfile.gettempdir()
+        temp_gradle_files = glob.glob(os.path.join(temp_dir, "gradle*"))
+        for temp_file in temp_gradle_files:
+            try:
+                if os.path.isdir(temp_file):
+                    shutil.rmtree(temp_file)
+                else:
+                    os.remove(temp_file)
+                safe_log(logbox, f"✓ Archivo temporal limpiado: {os.path.basename(temp_file)}")
+            except Exception as e:
+                # Ignorar errores en archivos temporales
+                pass
+        
+        safe_log(logbox, "✓ Limpieza completa de cache finalizada")
+        return True
+        
+    except Exception as e:
+        safe_log(logbox, f"✗ Error en limpieza de cache: {e}")
+        return False
+
+def crear_gradle_properties_optimizado_espacio(logbox):
+    '''
+    Crea gradle.properties optimizado para usar menos espacio en disco
+    '''
+    gradle_props_path = os.path.join(ANDROID_DIR, "gradle.properties")
+    
+    gradle_props_content = """# Configuración de memoria optimizada para poco espacio
+org.gradle.jvmargs=-Xmx2048m -XX:MaxMetaspaceSize=256m -XX:+HeapDumpOnOutOfMemoryError -Dfile.encoding=UTF-8
+org.gradle.daemon=false
+org.gradle.parallel=false
+org.gradle.workers.max=1
+org.gradle.caching=false
+org.gradle.configureondemand=false
+
+# Configuración Android
+android.useAndroidX=true
+android.enableJetifier=true
+android.nonTransitiveRClass=false
+
+# Optimizaciones de espacio
+android.suppressUnsupportedCompileSdk=34
+android.enableBuildCache=false
+android.enableSeparateAnnotationProcessing=true
+
+# Deshabilitar features no necesarias para ahorrar espacio
+android.defaults.buildfeatures.aidl=false
+android.defaults.buildfeatures.renderscript=false
+android.defaults.buildfeatures.shaders=false"""
+
+    try:
+        with open(gradle_props_path, 'w', encoding='utf-8') as f:
+            f.write(gradle_props_content)
+        safe_log(logbox, "✓ gradle.properties optimizado para poco espacio creado")
+        return True
+    except Exception as e:
+        safe_log(logbox, f"✗ Error creando gradle.properties: {e}")
+        return False
+
+def compilar_apk_con_limpieza_espacio(logbox, nombre_paquete_limpio):
+    '''
+    Versión del compilador que maneja proactivamente el espacio en disco
+    '''
+    # 1. Verificar espacio antes de empezar
+    if not verificar_espacio_disco(logbox):
+        safe_log(logbox, "✗ ERROR: No hay suficiente espacio en disco para continuar")
+        return None
+    
+    # 2. Limpieza agresiva inicial
+    limpiar_cache_gradle_completo(logbox)
+    
+    # 3. Configurar archivos con optimizaciones de espacio
+    if not configurar_build_gradle_proyecto(logbox):
+        return None
+    
+    if not configurar_settings_gradle(logbox):
+        return None
+        
+    if not crear_gradle_properties_optimizado_espacio(logbox):
+        return None
+    
+    if not actualizar_gradle_wrapper_corregido(logbox):
+        return None
+    
+    if not configurar_gradle_build_completo(logbox, nombre_paquete_limpio):
+        return None
+    
+    max_intentos = 2  # Reducir intentos para ahorrar espacio
+    for intento in range(1, max_intentos + 1):
+        safe_log(logbox, f"Intento {intento}/{max_intentos} de compilación...")
+        
+        # Limpieza antes de cada intento
+        if intento > 1:
+            limpiar_cache_gradle_completo(logbox)
+            time.sleep(5)  # Dar tiempo para que se libere el espacio
+        
+        try:
+            # Verificar espacio antes de cada intento
+            if not verificar_espacio_disco(logbox):
+                safe_log(logbox, f"✗ Espacio insuficiente en intento {intento}")
+                if intento < max_intentos:
+                    safe_log(logbox, "Intentando limpieza más agresiva...")
+                    limpiar_cache_gradle_completo(logbox)
+                    time.sleep(10)
+                    continue
+                return None
+            
+            # Capacitor sync
+            cmd_sync = ["npx", "cap", "sync", "android"]
+            safe_log(logbox, f"Ejecutando: {' '.join(cmd_sync)}")
+            result = subprocess.run(cmd_sync, cwd=PROJECT_DIR, capture_output=True, text=True, timeout=300, shell=True)
+            
+            if result.returncode != 0:
+                safe_log(logbox, f"ERROR en cap sync (intento {intento}): {result.stderr}")
+                if intento < max_intentos: 
+                    time.sleep(15)
+                    continue
+                return None
+            safe_log(logbox, "✓ Capacitor sync completado")
+            
+            # Build con una sola opción para ahorrar espacio
+            gradle_cmd = ["gradlew.bat", "assembleDebug", "--no-daemon", "--no-build-cache"]
+            
+            try:
+                safe_log(logbox, f"Intentando build con: {' '.join(gradle_cmd)}")
+                
+                result = subprocess.run(
+                    gradle_cmd,
+                    cwd=ANDROID_DIR,
+                    capture_output=True,
+                    text=True,
+                    timeout=1200,  # 20 minutos
+                    shell=True
+                )
+                
+                if result.returncode == 0:
+                    safe_log(logbox, "✓ APK compilado exitosamente")
+                    
+                    # Copiar APK inmediatamente y limpiar
+                    apk_src = os.path.join(ANDROID_DIR, "app", "build", "outputs", "apk", "debug", "app-debug.apk")
+                    apk_dst_dir = os.path.join(OUTPUT_APK_DIR, nombre_paquete_limpio)
+                    os.makedirs(apk_dst_dir, exist_ok=True)
+                    apk_dst_file = os.path.join(apk_dst_dir, f"{nombre_paquete_limpio}.apk")
+                    
+                    if os.path.exists(apk_src):
+                        shutil.copy2(apk_src, apk_dst_file)
+                        safe_log(logbox, f"✓ APK copiado a: {apk_dst_file}")
+                        
+                        # Limpiar inmediatamente después del éxito
+                        limpiar_cache_gradle_completo(logbox)
+                        
+                        return apk_dst_file
+                    else:
+                        safe_log(logbox, f"✗ APK no encontrado en: {apk_src}")
+                else:
+                    error_lines = result.stderr.split('\n')
+                    disk_space_errors = [line for line in error_lines if 'espacio' in line.lower() or 'space' in line.lower() or 'disk' in line.lower()]
+                    
+                    if disk_space_errors:
+                        safe_log(logbox, "✗ ERROR CONFIRMADO: Espacio en disco insuficiente")
+                        for error in disk_space_errors[:3]:
+                            safe_log(logbox, f"  {error.strip()}")
+                    else:
+                        important_errors = [line for line in error_lines if 'error' in line.lower()][:3]
+                        for error in important_errors:
+                            safe_log(logbox, f"  {error.strip()}")
+                        
+            except subprocess.TimeoutExpired:
+                safe_log(logbox, f"Timeout en build con gradlew.bat")
+            except Exception as cmd_error:
+                safe_log(logbox, f"Error ejecutando gradlew.bat: {str(cmd_error)}")
+            
+            if intento < max_intentos:
+                safe_log(logbox, "Reintentando en 20 segundos...")
+                time.sleep(20)
+                
+        except Exception as e:
+            safe_log(logbox, f"ERROR en intento {intento}: {e}")
+    
+    safe_log(logbox, "======== BUILD APK FALLIDO: ESPACIO EN DISCO INSUFICIENTE ========")
+    safe_log(logbox, "RECOMENDACIÓN: Libere al menos 8GB de espacio y vuelva a intentar")
+    return None
+
 def configurar_webview_camera_completo(logbox, android_dir_arg, nombre_paquete_limpio):
     package_name = f"com.libros3dar.{nombre_paquete_limpio}"
     
@@ -313,123 +779,51 @@ def configurar_webview_camera_completo(logbox, android_dir_arg, nombre_paquete_l
     target_package_full_path = os.path.join(java_base_dir, *package_name.split('.'))
     os.makedirs(target_package_full_path, exist_ok=True)
     
-    main_activity_content = f"""package {package_name};
+    main_activity_content = f'''package {package_name};
 
-import android.Manifest;
-import android.content.pm.PackageManager;
-import android.os.Build;
 import android.os.Bundle;
 import android.webkit.PermissionRequest;
 import android.webkit.WebChromeClient;
-import android.webkit.WebSettings;
-import android.util.Log;
-import android.widget.Toast;
-
-import androidx.annotation.NonNull;
-import androidx.core.app.ActivityCompat;
-import androidx.core.content.ContextCompat;
-
 import com.getcapacitor.BridgeActivity;
 
 public class MainActivity extends BridgeActivity {{
-    private static final int CAMERA_PERMISSION_REQUEST_CODE = 1001;
-
     @Override
     public void onCreate(Bundle savedInstanceState) {{
         super.onCreate(savedInstanceState);
         
-        // Solicitar permisos en tiempo de ejecución
-        requestCameraPermissions();
-        
-        // Configurar WebView después de obtener permisos
-        configureWebView();
-    }}
-    
-    private void requestCameraPermissions() {{
-        String[] permissions = {{
-            Manifest.permission.CAMERA,
-            Manifest.permission.RECORD_AUDIO,
-            Manifest.permission.MODIFY_AUDIO_SETTINGS
-        }};
-        
-        ActivityCompat.requestPermissions(this, permissions, CAMERA_PERMISSION_REQUEST_CODE);
-    }}
-    
-    private void configureWebView() {{
-        getBridge().getWebView().setWebChromeClient(new WebChromeClient() {{
+        // Configurar WebChromeClient para permisos de cámara y micrófono
+        this.bridge.getWebView().setWebChromeClient(new WebChromeClient() {{
             @Override
             public void onPermissionRequest(final PermissionRequest request) {{
                 runOnUiThread(() -> {{
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {{
-                        String[] requestedResources = request.getResources();
-                        for (String resource : requestedResources) {{
-                            if (resource.equals(PermissionRequest.RESOURCE_VIDEO_CAPTURE)) {{
-                                if (ContextCompat.checkSelfPermission(MainActivity.this, 
-                                    Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {{
-                                    request.grant(new String[]{{PermissionRequest.RESOURCE_VIDEO_CAPTURE}});
-                                }} else {{
-                                    request.deny();
-                                }}
-                                return;
-                            }}
-                            if (resource.equals(PermissionRequest.RESOURCE_AUDIO_CAPTURE)) {{
-                                if (ContextCompat.checkSelfPermission(MainActivity.this, 
-                                    Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {{
-                                    request.grant(new String[]{{PermissionRequest.RESOURCE_AUDIO_CAPTURE}});
-                                }} else {{
-                                    request.deny();
-                                }}
-                                return;
-                            }}
+                    String[] resources = request.getResources();
+                    boolean hasCamera = false;
+                    boolean hasMicrophone = false;
+                    
+                    for (String resource : resources) {{
+                        if (PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(resource)) {{
+                            hasCamera = true;
+                        }} else if (PermissionRequest.RESOURCE_AUDIO_CAPTURE.equals(resource)) {{
+                            hasMicrophone = true;
                         }}
                     }}
-                    request.deny();
+                    
+                    if (hasCamera || hasMicrophone) {{
+                        // Conceder ambos permisos si se solicitan para simplificar
+                        request.grant(request.getResources());
+                    }} else {{
+                        request.deny();
+                    }}
                 }});
             }}
-            
-            @Override
-            public void onPermissionRequestCanceled(PermissionRequest request) {{
-                super.onPermissionRequestCanceled(request);
-                Log.w("WebChromeClient", "Permission request canceled");
-            }}
         }});
-        
-        WebSettings settings = getBridge().getWebView().getSettings();
-        settings.setJavaScriptEnabled(true);
-        settings.setDomStorageEnabled(true);
-        settings.setAllowFileAccess(true);
-        settings.setAllowFileAccessFromFileURLs(true);
-        settings.setAllowUniversalAccessFromFileURLs(true);
-        settings.setMediaPlaybackRequiresUserGesture(false);
-        settings.setJavaScriptCanOpenWindowsAutomatically(true);
     }}
-    
-    @Override
-    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {{
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        
-        if (requestCode == CAMERA_PERMISSION_REQUEST_CODE) {{
-            boolean allGranted = true;
-            for (int result : grantResults) {{
-                if (result != PackageManager.PERMISSION_GRANTED) {{
-                    allGranted = false;
-                    break;
-                }}
-            }}
-            
-            if (allGranted) {{
-                configureWebView();
-            }} else {{
-                Toast.makeText(this, "Permisos de cámara requeridos para AR", Toast.LENGTH_LONG).show();
-            }}
-        }}
-    }}
-}}"""
+}}'''
     
     main_activity_path = os.path.join(target_package_full_path, "MainActivity.java")
     with open(main_activity_path, "w", encoding="utf-8") as f:
         f.write(main_activity_content)
-    safe_log(logbox, f"✓ MainActivity.java configurado y escrito en: {main_activity_path}")
+    safe_log(logbox, f"✓ MainActivity.java (con WebChromeClient) configurado en: {main_activity_path}")
 
 
 def actualizar_paquete_main_activity(logbox, android_package_name):
@@ -533,101 +927,112 @@ def preparar_proyecto_capacitor(logbox):
         os.makedirs(folder, exist_ok=True)
     safe_log(logbox, "✓ Carpetas mipmap en proyecto de trabajo verificadas/creadas.")
 
-
-def ejecutar_cap_sync(logbox, project_dir_arg, update=False):
-    """
-    Ejecuta los comandos de Capacitor 'update', 'sync' y 'copy' para una integración completa.
-    """
-    safe_log(logbox, "Iniciando secuencia de actualización de Capacitor...")
-    original_cwd = os.getcwd()
+def diagnosticar_espacio_disco(logbox):
+    '''
+    Diagnostica en detalle el uso de espacio en disco
+    '''
+    import psutil
+    
     try:
-        os.chdir(project_dir_arg)
-        safe_log(logbox, f"Cambiado a directorio: {os.getcwd()}")
-
-        if update:
-            # 1. Update
-            safe_log(logbox, "Ejecutando 'npx cap update'...")
-            proc_update = subprocess.run("npx cap update", capture_output=True, text=True, encoding="utf-8", check=True, shell=True)
-            safe_log(logbox, proc_update.stdout)
-            if proc_update.stderr: safe_log(logbox, f"npx cap update ERR: {proc_update.stderr}")
-            safe_log(logbox, "✓ 'npx cap update' completado.")
-
-        # 2. Sync
-        safe_log(logbox, "Ejecutando 'npx cap sync android'...")
-        proc_sync = subprocess.run("npx cap sync android", capture_output=True, text=True, encoding="utf-8", check=True, shell=True)
-        safe_log(logbox, proc_sync.stdout)
-        if proc_sync.stderr: safe_log(logbox, f"npx cap sync ERR: {proc_sync.stderr}")
-        safe_log(logbox, "✓ 'npx cap sync android' completado.")
+        safe_log(logbox, "=== DIAGNÓSTICO DE ESPACIO EN DISCO ===")
         
-        # 3. Copy
-        safe_log(logbox, "Ejecutando 'npx cap copy android'...")
-        proc_copy = subprocess.run("npx cap copy android", capture_output=True, text=True, encoding="utf-8", check=True, shell=True)
-        safe_log(logbox, proc_copy.stdout)
-        if proc_copy.stderr: safe_log(logbox, f"npx cap copy ERR: {proc_copy.stderr}")
-        safe_log(logbox, "✓ 'npx cap copy android' completado. Esto asegura que capacitor.js esté en su sitio.")
-
-        return True
-    except subprocess.CalledProcessError as e:
-        safe_log(logbox, f"✗ ERROR en la ejecución de Capacitor: {e.cmd}")
-        safe_log(logbox, f"  STDOUT: {e.stdout}")
-        safe_log(logbox, f"  STDERR: {e.stderr}")
-        messagebox.showerror("Error de Sincronización Capacitor", f"La sincronización de Capacitor falló. Revisa el log.")
-        return False
+        # Verificar discos principales
+        for letra in ['C:', 'D:']:
+            try:
+                disk = psutil.disk_usage(letra)
+                total_gb = disk.total / (1024**3)
+                used_gb = disk.used / (1024**3)
+                free_gb = disk.free / (1024**3)
+                percent_used = (used_gb / total_gb) * 100
+                
+                safe_log(logbox, f"Disco {letra}")
+                safe_log(logbox, f"  Total: {total_gb:.1f} GB")
+                safe_log(logbox, f"  Usado: {used_gb:.1f} GB ({percent_used:.1f}%)")
+                safe_log(logbox, f"  Libre: {free_gb:.1f} GB")
+                
+                if free_gb < 4:
+                    safe_log(logbox, f"  ⚠ CRÍTICO: Menos de 4GB libres")
+                elif free_gb < 8:
+                    safe_log(logbox, f"  ⚠ ADVERTENCIA: Menos de 8GB libres")
+                else:
+                    safe_log(logbox, f"  ✓ Espacio suficiente")
+                    
+            except Exception as e:
+                safe_log(logbox, f"No se pudo verificar disco {letra}: {e}")
+        
+        # Verificar directorios específicos
+        dirs_to_check = [
+            (os.path.join(os.path.expanduser("~"), ".gradle"), "Cache Gradle Usuario"),
+            (ANDROID_DIR, "Proyecto Android"),
+            (os.path.join(ANDROID_DIR, "app", "build"), "Build Directory"),
+        ]
+        
+        safe_log(logbox, "\n=== TAMAÑO DE DIRECTORIOS ===")
+        for dir_path, name in dirs_to_check:
+            if os.path.exists(dir_path):
+                try:
+                    total_size = 0
+                    for dirpath, dirnames, filenames in os.walk(dir_path):
+                        for filename in filenames:
+                            filepath = os.path.join(dirpath, filename)
+                            if os.path.exists(filepath):
+                                total_size += os.path.getsize(filepath)
+                    
+                    size_gb = total_size / (1024**3)
+                    safe_log(logbox, f"{name}: {size_gb:.2f} GB")
+                    
+                except Exception as e:
+                    safe_log(logbox, f"{name}: Error calculando tamaño - {e}")
+            else:
+                safe_log(logbox, f"{name}: No existe")
+        
+        safe_log(logbox, "=== RECOMENDACIONES ===")
+        safe_log(logbox, "1. Libere espacio en disco eliminando archivos innecesarios")
+        safe_log(logbox, "2. Considere mover el proyecto a un disco con más espacio")
+        safe_log(logbox, "3. Limpie el cache de Gradle manualmente")
+        safe_log(logbox, "4. Use 'Liberador de espacio en disco' de Windows")
+        
+    except ImportError:
+        safe_log(logbox, "Para diagnóstico completo, instale: pip install psutil")
     except Exception as e:
-        safe_log(logbox, f"✗ Error inesperado durante la ejecución de Capacitor: {e}")
-        messagebox.showerror("Error inesperado", f"Ocurrió un error inesperado durante la sincronización: {e}")
-        return False
-    finally:
-        # Volver al directorio original
-        os.chdir(original_cwd)
-        safe_log(logbox, f"Vuelto a directorio original: {os.getcwd()}")
+        safe_log(logbox, f"Error en diagnóstico: {e}")
 
-def ejecutar_gradle_build(logbox, project_dir_arg, android_dir_arg):
-    """
-    Ejecuta los comandos de Gradle directamente desde Python para asegurar que se use
-    el build.gradle actualizado y se realice una compilación limpia.
-    """
-    safe_log(logbox, "Iniciando limpieza y compilación de Gradle directamente...")
+def verificar_espacio_disco(logbox):
+    '''
+    Verifica el espacio disponible en los discos críticos
+    '''
+    import psutil
+    
     try:
-        # Navegar al directorio android
-        os.chdir(android_dir_arg)
-        safe_log(logbox, f"Cambiado a directorio: {os.getcwd()}")
-
-        # Limpiar el proyecto Gradle
-        # CRÍTICO: Usar shell=True para asegurar que los comandos se encuentren en Windows
-        clean_cmd = "gradlew clean"
-        safe_log(logbox, f"Ejecutando: {clean_cmd}")
-        proc_clean = subprocess.run(clean_cmd, capture_output=True, text=True, encoding="utf-8", check=True, shell=True)
-        safe_log(logbox, proc_clean.stdout)
-        if proc_clean.stderr:
-            safe_log(logbox, f"Gradle clean ERR: {proc_clean.stderr}")
-        safe_log(logbox, "✓ Gradle clean completado.")
-
-        # Construir el APK de depuración
-        build_cmd = "gradlew assembleDebug"
-        safe_log(logbox, f"Ejecutando: {build_cmd}")
-        proc_build = subprocess.run(build_cmd, capture_output=True, text=True, encoding="utf-8", check=True, shell=True)
-        safe_log(logbox, proc_build.stdout)
-        if proc_build.stderr:
-            safe_log(logbox, f"Gradle assembleDebug ERR: {proc_build.stderr}")
-        safe_log(logbox, "✓ Gradle assembleDebug completado.")
-
-        # Volver al directorio original del proyecto Capacitor
-        os.chdir(project_dir_arg)
-        safe_log(logbox, f"Vuelto a directorio: {os.getcwd()}")
-
+        # Verificar disco C: (cache de Gradle)
+        disk_c = psutil.disk_usage('C:')
+        free_gb_c = disk_c.free / (1024**3)
+        
+        # Verificar disco D: (proyecto)
+        disk_d = psutil.disk_usage('D:')
+        free_gb_d = disk_d.free / (1024**3)
+        
+        safe_log(logbox, f"Espacio libre en C: {free_gb_c:.1f} GB")
+        safe_log(logbox, f"Espacio libre en D: {free_gb_d:.1f} GB")
+        
+        # Se necesitan al menos 8GB libres para build de Android
+        if free_gb_c < 4:
+            safe_log(logbox, f"⚠ ADVERTENCIA: Poco espacio en C: ({free_gb_c:.1f} GB). Se necesitan al menos 4GB")
+            return False
+            
+        if free_gb_d < 4:
+            safe_log(logbox, f"⚠ ADVERTENCIA: Poco espacio en D: ({free_gb_d:.1f} GB). Se necesitan al menos 4GB")
+            return False
+            
+        safe_log(logbox, "✓ Espacio en disco suficiente para build")
         return True
-    except subprocess.CalledProcessError as e:
-        safe_log(logbox, f"✗ ERROR en la ejecución de Gradle: {e.cmd}")
-        safe_log(logbox, f"  STDOUT: {e.stdout}")
-        safe_log(logbox, f"  STDERR: {e.stderr}")
-        messagebox.showerror("Error de Gradle", f"La compilación de Gradle falló. Revisa el log para más detalles.")
-        return False
+        
+    except ImportError:
+        safe_log(logbox, "⚠ No se puede verificar espacio (instale psutil): pip install psutil")
+        return True
     except Exception as e:
-        safe_log(logbox, f"✗ Error inesperado durante la ejecución de Gradle: {e}")
-        messagebox.showerror("Error inesperado", f"Ocurrió un error inesperado durante la compilación: {e}")
-        return False
-
+        safe_log(logbox, f"⚠ Error verificando espacio en disco: {e}")
+        return True
 
 # ---------------------- CLASE PRINCIPAL GUI ----------------------
 
@@ -700,6 +1105,8 @@ class GeneradorGUI:
                command=self.generar_paquete, width=18, height=2).pack(pady=5)
         Button(acciones_frame, text="Generar APK", bg="#007bff", fg="white",
                command=self.generar_apk, width=18, height=2).pack(pady=5)
+        Button(acciones_frame, text="Iniciar Servidor y Ngrok", bg="#ffc107", fg="black",
+               command=self.iniciar_servidor_ngrok, width=18, height=2).pack(pady=5)
 
         Label(acciones_frame, text="9. Verificación:", font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(20, 10))
         Button(acciones_frame, text="Verificar Conexión", command=self.verify_backend_connection, width=18).pack(pady=5)
@@ -875,28 +1282,63 @@ class GeneradorGUI:
             shutil.copy2(portada_dest_paquete, os.path.join(WWW_DIR, "portada.jpg"))
             safe_log(self.logbox, f"✓ Portada copiada a: {portada_dest_paquete} y a www/")
 
-            marcadores_data = []
+            # Crear directorios para assets en www
+            www_models_dir = os.path.join(WWW_DIR, "models")
+            www_patterns_dir = os.path.join(WWW_DIR, "patterns")
+            os.makedirs(www_models_dir, exist_ok=True)
+            os.makedirs(www_patterns_dir, exist_ok=True)
+
             marcadores_ar_html = ""
             for par in self.pares:
                 if par['imagen'] and par['modelo']:
-                    img_dest = os.path.join(paquete_dir, f"{par['base']}.jpg")
-                    with Image.open(par['imagen']) as img:
-                        img.convert("RGB").save(img_dest, "JPEG", quality=95)
-                    
-                    mod_dest = os.path.join(paquete_dir, f"{par['base']}.glb")
+                    # Procesar y copiar modelo 3D
+                    mod_dest_paquete = os.path.join(paquete_dir, "models", f"{par['base']}.glb")
+                    mod_dest_www = os.path.join(www_models_dir, f"{par['base']}.glb")
+                    os.makedirs(os.path.dirname(mod_dest_paquete), exist_ok=True)
                     if os.path.splitext(par['modelo'])[1].lower() == ".glb":
-                        shutil.copy2(par['modelo'], mod_dest)
+                        shutil.copy2(par['modelo'], mod_dest_paquete)
                     else:
-                        self.convertir_con_blender(par['modelo'], mod_dest)
+                        self.convertir_con_blender(par['modelo'], mod_dest_paquete)
+                    shutil.copy2(mod_dest_paquete, mod_dest_www)
                     
-                    shutil.copy2(img_dest, os.path.join(WWW_DIR, f"{par['base']}.jpg"))
-                    shutil.copy2(mod_dest, os.path.join(WWW_DIR, f"{par['base']}.glb"))
+                    # Copiar imagen original al paquete (para referencia)
+                    img_dest_paquete = os.path.join(paquete_dir, "images", f"{par['base']}.jpg")
+                    os.makedirs(os.path.dirname(img_dest_paquete), exist_ok=True)
+                    shutil.copy2(par['imagen'], img_dest_paquete)
+
+                    # --- Lógica de Generación de Marcadores Orquestada ---
+                    nombre_limpio = par['base']
+                    marker_type = None
                     
-                    marcadores_ar_html += f"""
-            <a-marker type='pattern' url='{par['base']}.patt' vidhandler>
-                <a-entity gltf-model="url({par['base']}.glb)" scale="0.3 0.3 0.3" animation-mixer></a-entity>
-            </a-marker>"""
-            safe_log(self.logbox, f"✓ Asset procesado y copiado a www: {par['base']}")
+                    # Intento 1: Generar marcador NFT
+                    if generar_marcador_nft(self.logbox, img_dest_paquete, nombre_limpio):
+                        marker_type = 'nft'
+                    else:
+                        # Intento 2 (Fallback): Generar patrón .patt con OpenCV
+                        safe_log(self.logbox, f"Fallback a OpenCV para generar patrón .patt para {nombre_limpio}")
+                        patt_dest_www = os.path.join(www_patterns_dir, f"{nombre_limpio}.patt")
+                        if generar_patt_opencv(self.logbox, img_dest_paquete, patt_dest_www):
+                            marker_type = 'pattern'
+                        else:
+                            safe_log(self.logbox, f"✗ ERROR: Fallaron todos los métodos para generar un marcador para {nombre_limpio}.")
+
+                    # Construir el HTML para este marcador según el tipo generado
+                    if marker_type == 'nft':
+                        descriptor_url = os.path.join("assets", "markers", nombre_limpio).replace("\\", "/")
+                        model_url = os.path.join("models", f"{nombre_limpio}.glb").replace("\\", "/")
+                        marcadores_ar_html += f"""
+        <a-marker type='nft' descriptorurl='{descriptor_url}'>
+            <a-entity gltf-model="url({model_url})" scale="0.3 0.3 0.3" animation-mixer gesture-handler></a-entity>
+        </a-marker>"""
+                        safe_log(self.logbox, f"✓ Marcador NFT procesado para: {nombre_limpio}")
+                    elif marker_type == 'pattern':
+                        pattern_url = os.path.join("patterns", f"{nombre_limpio}.patt").replace("\\", "/")
+                        model_url = os.path.join("models", f"{nombre_limpio}.glb").replace("\\", "/")
+                        marcadores_ar_html += f"""
+        <a-marker type='pattern' url='{pattern_url}'>
+            <a-entity gltf-model="url({model_url})" scale="0.3 0.3 0.3" animation-mixer gesture-handler></a-entity>
+        </a-marker>"""
+                        safe_log(self.logbox, f"✓ Marcador de Patrón procesado para: {nombre_limpio}")
 
             # 2. Generar y guardar claves
             self.claves = [self._generar_codigo_eco() for _ in range(cantidad)]
@@ -919,24 +1361,38 @@ class GeneradorGUI:
 
             # 4. Actualizar config de Capacitor
             config_path = os.path.join(PROJECT_DIR, "capacitor.config.json")
-            with open(config_path, "w", encoding="utf-8") as f:
-                json.dump({
-                    "appId": f"com.libros3dar.{nombre}",
-                    "appName": nombre,
-                    "webDir": "www",
-                    "bundledWebRuntime": False,
-                    "server": {
-                        "androidScheme": "https"
+            capacitor_config = {
+                "appId": f"com.libros3dar.{nombre}",
+                "appName": self.nombre_libro.get().strip(),
+                "webDir": "www",
+                "bundledWebRuntime": False,
+                "android": {
+                    "allowMixedContent": True,
+                    "webSecurity": False,
+                    "appendUserAgent": "ARCapacitorApp/1.0"
+                },
+                "server": {
+                    "hostname": "localhost",
+                    "androidScheme": "https",
+                    "cleartext": True
+                },
+                "plugins": {
+                    "Camera": {
+                        "permissions": [
+                            "camera",
+                            "photos"
+                        ]
                     },
-                    "android": {
-                        "allowMixedContent": True,
-                        "captureInput": True,
-                        "webContentsDebuggingEnabled": True
+                    "SplashScreen": {
+                        "launchShowDuration": 0
                     }
-                }, f, indent=4)
-            safe_log(self.logbox, f"✓ capacitor.config.json actualizado.")
+                }
+            }
+            with open(config_path, "w", encoding="utf-8") as f:
+                json.dump(capacitor_config, f, indent=2, ensure_ascii=False)
+            safe_log(self.logbox, f"✓ capacitor.config.json actualizado con configuración AR optimizada.")
 
-            update_strings_xml(self.logbox, nombre)
+            update_strings_xml(self.logbox, self.nombre_libro.get().strip())
             self.set_progress("Paquete generado.", "green")
             return True
 
@@ -1079,42 +1535,42 @@ class GeneradorGUI:
         <div id="message"></div>
     </div>
     <script>
-        function generateSimpleHash(str) {{
-            let hash = 0;
-            for (let i = 0; i < str.length; i++) {{
-                const char = str.charCodeAt(i);
-                hash = (hash << 5) - hash + char;
-                hash |= 0; // Convert to 32bit integer
-            }}
-            return 'dev-' + Math.abs(hash).toString(16);
-        }}
-
         async function getOrCreateDeviceId() {{
             let deviceId = localStorage.getItem('device_id');
-            if (!deviceId) {{
+            if (deviceId) return deviceId;
+
+            if (window.Capacitor && Capacitor.Plugins && Capacitor.Plugins.Device) {{
                 try {{
-                    // Usar Capacitor Device plugin si está disponible para un ID más robusto
-                    const {{ Device }} = Capacitor.Plugins;
-                    const info = await Device.getId();
+                    const info = await Capacitor.Plugins.Device.getId();
                     deviceId = info.uuid;
                 }} catch (e) {{
-                    // Fallback para web o si el plugin falla
-                    console.warn('Capacitor Device plugin not available. Using browser-based fingerprint.');
-                    const deviceInfo = navigator.userAgent + navigator.language + screen.width + screen.height;
-                    deviceId = generateSimpleHash(deviceInfo);
+                    console.warn('Capacitor Device plugin failed. Using browser-based fingerprint.', e);
                 }}
-                localStorage.setItem('device_id', deviceId);
             }}
+            
+            if (!deviceId) {{
+                const deviceInfo = navigator.userAgent + navigator.language + (screen.width || 0) + (screen.height || 0);
+                let hash = 0;
+                for (let i = 0; i < deviceInfo.length; i++) {{
+                    const char = deviceInfo.charCodeAt(i);
+                    hash = ((hash << 5) - hash) + char;
+                    hash |= 0;
+                }}
+                deviceId = 'dev-' + Math.abs(hash).toString(16);
+            }}
+
+            localStorage.setItem('device_id', deviceId);
             return deviceId;
         }}
         
-        // Redirigir si ya está activado
-        if (localStorage.getItem('app_activated') === 'true') {{
-            window.location.href = 'main-menu.html';
-        }}
-
+        document.addEventListener('deviceready', () => {{
+            if (localStorage.getItem('app_activated') === 'true') {{
+                window.location.href = 'main-menu.html';
+            }}
+        }});
+        
         async function validateCode() {{
-            const code = document.getElementById('activationCode').value.trim();
+            const code = document.getElementById('activationCode').value.trim().toUpperCase();
             const messageDiv = document.getElementById('message');
             messageDiv.innerHTML = 'Validando...';
 
@@ -1128,7 +1584,7 @@ class GeneradorGUI:
                 const payload = {{ token: code, device_id: deviceId }};
                 let result;
 
-                if (window.Capacitor && Capacitor.isNativePlatform()) {{
+                if (window.Capacitor && Capacitor.isNativePlatform() && Capacitor.Plugins.CapacitorHttp) {{
                     const {{ CapacitorHttp }} = Capacitor.Plugins;
                     const response = await CapacitorHttp.request({{
                         url: '{activation_url}',
@@ -1138,15 +1594,12 @@ class GeneradorGUI:
                     }});
                     result = response.data;
                 }} else {{
-                    console.log("Ejecutando en web, usando fetch.");
                     const response = await fetch('{activation_url}', {{
                         method: 'POST',
                         headers: {{ 'Content-Type': 'application/json' }},
                         body: JSON.stringify(payload)
                     }});
-                    if (!response.ok) {{
-                       throw new Error(`HTTP error! status: ${{response.status}}`);
-                    }}
+                    if (!response.ok) throw new Error(`HTTP error! status: ${{response.status}}`);
                     result = await response.json();
                 }}
 
@@ -1158,7 +1611,6 @@ class GeneradorGUI:
                 }} else {{
                     messageDiv.innerHTML = `<p class="error">${{result.error || 'Código inválido o ya utilizado.'}}</p>`;
                 }}
-
             }} catch (error) {{
                 messageDiv.innerHTML = '<p class="error">Error de conexión. Verifica tu internet y la URL del servidor.</p>';
                 console.error('Error de activación:', error);
@@ -1206,23 +1658,22 @@ class GeneradorGUI:
                 return;
             }}
 
-            try {{
-                // Usar el plugin de Cámara de Capacitor para pedir permisos explícitamente
-                const {{ Camera }} = Capacitor.Plugins;
-                const status = await Camera.requestPermissions();
-
-                if (status.camera === 'granted') {{
-                    // Si el permiso es concedido, navegar a la vista AR
-                    console.log("Permiso de cámara concedido. Iniciando AR...");
+            if (typeof Capacitor !== 'undefined' && Capacitor.isNativePlatform() && Capacitor.Plugins && Capacitor.Plugins.Camera) {{
+                try {{
+                    const status = await Capacitor.Plugins.Camera.requestPermissions();
+                    if (status.camera === 'granted') {{
+                        console.log("Permiso de cámara concedido. Iniciando AR...");
+                        window.location.href = 'ar-viewer.html';
+                    }} else {{
+                        alert('El permiso para usar la cámara es necesario para la Realidad Aumentada.');
+                    }}
+                }} catch (e) {{
+                    console.error("Error pidiendo permisos de cámara con Capacitor, intentando de todas formas.", e);
                     window.location.href = 'ar-viewer.html';
-                }} else {{
-                    // Si el permiso es denegado, mostrar un mensaje al usuario
-                    alert('El permiso para usar la cámara es necesario para la Realidad Aumentada.');
                 }}
-            }} catch (e) {{
-                // Fallback para web o si el plugin falla
-                console.error("Error pidiendo permisos de cámara con Capacitor, intentando de todas formas.", e);
-                // En un navegador web, el propio navegador pedirá permiso al iniciar AR.js
+            }} else {{
+                // Fallback para web o si el plugin no está disponible
+                console.log("Usando WebRTC para navegador, o Capacitor no está listo.");
                 window.location.href = 'ar-viewer.html';
             }}
         }}
@@ -1231,86 +1682,136 @@ class GeneradorGUI:
 </html>"""
 
     def generate_ar_viewer_html(self, nombre, marcadores_ar_html):
+        # El HTML proporcionado en el análisis es el más completo y robusto.
         return f"""
 <!DOCTYPE html>
 <html>
 <head>
     <meta charset="utf-8">
-    <title>AR App</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <script src="https://aframe.io/releases/1.4.0/aframe.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/gh/AR-js-org/AR.js@3.4.5/aframe/build/aframe-ar.min.js"></script>
+    <title>AR Experience - {nombre}</title>
+    <script src="https://aframe.io/releases/1.3.0/aframe.min.js"></script>
+    <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
+    <style>
+        body {{ margin: 0; font-family: Arial, sans-serif; overflow: hidden; }}
+        .arjs-loader {{
+            height: 100%; width: 100%; position: absolute; top: 0; left: 0;
+            background-color: rgba(0, 0, 0, 0.8); z-index: 9999;
+            display: flex; justify-content: center; align-items: center;
+        }}
+        .arjs-loader div {{
+            text-align: center; font-size: 1.25em; color: white;
+        }}
+    </style>
 </head>
-<body style="margin: 0; overflow: hidden;">
+<body>
+    <div class="arjs-loader">
+        <div>Cargando AR, por favor espere...</div>
+    </div>
+    
     <a-scene
         embedded
-        arjs="sourceType: webcam; debugUIEnabled: false; detectionMode: mono_and_matrix; matrixCodeType: 3x3;"
-        vr-mode-ui="enabled: false"
-        renderer="logarithmicDepthBuffer: true;"
-        device-orientation-permission-ui="enabled: false">
+        arjs="sourceType: webcam; debugUIEnabled: false; trackingMethod: best;"
+        vr-mode-ui="enabled: false;"
+        renderer="logarithmicDepthBuffer: true; colorManagement: true; sortObjects: true;"
+        gesture-detector
+        id="scene">
         
-        <a-marker preset="hiro">
-            <a-box position="0 0.5 0" material="color: red;"></a-box>
-        </a-marker>
+        {marcadores_ar_html}
         
         <a-entity camera></a-entity>
     </a-scene>
 
     <script>
-        // Solicitar permisos de cámara explícitamente
-        function requestCameraPermission() {{
-            return new Promise((resolve, reject) => {{
-                if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {{
-                    reject(new Error('getUserMedia no está disponible'));
+        AFRAME.registerComponent('gesture-handler', {{
+            schema: {{
+                enabled: {{ default: true }},
+                rotationFactor: {{ default: 5 }},
+                minScale: {{ default: 0.3 }},
+                maxScale: {{ default: 8 }},
+            }},
+            init: function () {{
+                this.handleScale = this.handleScale.bind(this);
+                this.handleRotation = this.handleRotation.bind(this);
+                this.isVisible = false;
+                this.initialScale = this.el.object3D.scale.clone();
+                this.scaleFactor = 1;
+                this.el.sceneEl.addEventListener('markerFound', () => (this.isVisible = true));
+                this.el.sceneEl.addEventListener('markerLost', () => (this.isVisible = false));
+            }},
+            play: function () {{
+                if (this.data.enabled) {{
+                    this.el.sceneEl.addEventListener('onefingermove', this.handleRotation);
+                    this.el.sceneEl.addEventListener('twofingermove', this.handleScale);
+                }}
+            }},
+            pause: function () {{
+                this.el.sceneEl.removeEventListener('onefingermove', this.handleRotation);
+                this.el.sceneEl.removeEventListener('twofingermove', this.handleScale);
+            }},
+            handleRotation: function (event) {{
+                if (this.isVisible) {{
+                    this.el.object3D.rotation.y += event.detail.positionChange.x * this.data.rotationFactor;
+                    this.el.object3D.rotation.x += event.detail.positionChange.y * this.data.rotationFactor;
+                }}
+            }},
+            handleScale: function (event) {{
+                if (this.isVisible) {{
+                    this.scaleFactor *= 1 + event.detail.spreadChange / event.detail.startSpread;
+                    this.scaleFactor = Math.min(Math.max(this.scaleFactor, this.data.minScale), this.data.maxScale);
+                    this.el.object3D.scale.x = this.scaleFactor * this.initialScale.x;
+                    this.el.object3D.scale.y = this.scaleFactor * this.initialScale.y;
+                    this.el.object3D.scale.z = this.scaleFactor * this.initialScale.z;
+                }}
+            }}
+        }});
+
+        AFRAME.registerComponent('gesture-detector', {{
+            init: function () {{
+                this.internalState = {{ previousState: null }};
+                this.emitGestureEvent = this.emitGestureEvent.bind(this);
+                this.el.sceneEl.addEventListener('touchstart', this.updateState.bind(this));
+                this.el.sceneEl.addEventListener('touchmove', this.updateState.bind(this));
+                this.el.sceneEl.addEventListener('touchend', (evt) => {{
+                    this.internalState.previousState = null;
+                }});
+            }},
+            updateState: function(event) {{
+                const currentState = this.getTouchState(event);
+                const previousState = this.internalState.previousState;
+                const gestureContinues = previousState && currentState && currentState.touchCount === previousState.touchCount;
+                if (!gestureContinues) {{
+                    this.internalState.previousState = currentState;
                     return;
                 }}
-
-                navigator.mediaDevices.getUserMedia({{ 
-                    video: {{ 
-                        facingMode: 'environment',
-                        width: {{ ideal: 1280 }},
-                        height: {{ ideal: 720 }}
-                    }}, 
-                    audio: false 
-                }})
-                .then(stream => {{
-                    // Detener el stream inmediatamente, solo necesitamos el permiso
-                    stream.getTracks().forEach(track => track.stop());
-                    resolve(true);
-                }})
-                .catch(err => {{
-                    console.error('Error obteniendo acceso a la cámara:', err);
-                    reject(err);
-                }});
-            }});
-        }}
-
-        // Inicializar AR después de obtener permisos
-        window.addEventListener('load', async () => {{
-            try {{
-                console.log('Solicitando permisos de cámara...');
-                await requestCameraPermission();
-                console.log('Permisos de cámara obtenidos');
-                
-                // Inicializar A-Frame
-                const scene = document.querySelector('a-scene');
-                if (scene.hasLoaded) {{
-                    console.log('A-Frame ya cargado');
-                }} else {{
-                    scene.addEventListener('loaded', () => {{
-                        console.log('A-Frame cargado correctamente');
-                    }});
-                }}
-            }} catch (error) {{
-                console.error('Error inicializando AR:', error);
-                document.body.innerHTML = `
-                    <div style="padding: 20px; text-align: center;">
-                        <h2>Error de Cámara</h2>
-                        <p>No se pudo acceder a la cámara: ${{error.message}}</p>
-                        <button onclick="location.reload()">Reintentar</button>
-                    </div>
-                `;
+                const eventName = ({{1: 'one', 2: 'two'}})[currentState.touchCount] + 'fingermove';
+                this.emitGestureEvent(eventName, currentState);
+                this.internalState.previousState = currentState;
+            }},
+            getTouchState: function(event) {{
+                if (event.touches.length === 0) return null;
+                const touch1 = event.touches[0];
+                const touch2 = event.touches.length > 1 ? event.touches[1] : null;
+                const spread = touch2 ? Math.hypot(touch1.pageX - touch2.pageX, touch1.pageY - touch2.pageY) : 0;
+                return {{
+                    touchCount: event.touches.length,
+                    position: {{ x: touch1.pageX, y: touch1.pageY }},
+                    spread: spread,
+                    positionChange: this.internalState.previousState ? {{
+                        x: touch1.pageX - this.internalState.previousState.position.x,
+                        y: touch1.pageY - this.internalState.previousState.position.y,
+                    }} : {{x: 0, y: 0}},
+                    startSpread: this.internalState.previousState ? this.internalState.previousState.spread : 0,
+                    spreadChange: spread - (this.internalState.previousState ? this.internalState.previousState.spread : 0),
+                }};
+            }},
+            emitGestureEvent: function(eventName, state) {{
+                this.el.sceneEl.emit(eventName, state);
             }}
+        }});
+
+        window.addEventListener('arjs-video-loaded', () => {{
+            document.querySelector('.arjs-loader').style.display = 'none';
         }});
     </script>
 </body>
@@ -1440,130 +1941,73 @@ bpy.ops.export_scene.gltf(filepath=r'{destino}', export_format='GLB', export_app
         Coordina la preparación del proyecto Capacitor, la generación de íconos,
         la actualización de configuraciones de Android y la compilación de Gradle.
         """
-        # Obtener el nombre limpio del paquete/libro
+        # Verificación inicial de espacio
+        if not verificar_espacio_disco(self.logbox):
+            safe_log(self.logbox, "✗ ADVERTENCIA: Poco espacio en disco disponible")
+            respuesta = messagebox.askyesno("Espacio Insuficiente", 
+                "Se detectó poco espacio en disco. ¿Desea continuar de todos modos?")
+            if not respuesta:
+                return
+        
+        diagnosticar_espacio_disco(self.logbox)
+
         nombre = limpiar_nombre(self.nombre_libro.get().strip())
-        # Ruta de la portada dentro del paquete generado (para referencia interna)
         libro_dir = os.path.join(PAQUETES_DIR, nombre)
-        portada_path_for_ps = os.path.join(libro_dir, "portada.jpg")
-
+        
         if not nombre:
-            messagebox.showerror("Error", "El nombre del paquete está vacío. Por favor, ingresa un nombre.")
+            messagebox.showerror("Error", "El nombre del paquete está vacío.")
             return
-        
-        # --- REORDENAMIENTO CRÍTICO AQUÍ ---
-        # 1. Siempre preparar un proyecto Capacitor limpio primero
+
         preparar_proyecto_capacitor(self.logbox)
-        time.sleep(0.1) # Pausa después de preparar proyecto
-
-        # 2. Luego, generar o regenerar el contenido del paquete web (index.html, assets)
-        # Esto asegura que el www_dir del proyecto de trabajo tenga el HTML correcto.
-        safe_log(self.logbox, "Generando o regenerando el contenido del paquete web (index.html, assets) para el APK...")
-        if not self.generar_paquete(): # Esta llamada ahora siempre pondrá el index.html correcto en WWW_DIR
-            return
-        # --- FIN REORDENAMIENTO ---
-
-        # --- VALIDACIÓN CRÍTICA DE LA URL DEL BACKEND ---
-        backend_url_gui = self.backend_url.get().strip()
         
-        if not backend_url_gui.startswith("https://"):
-            messagebox.showerror("Error de URL", "La URL del Backend de activación DEBE comenzar con 'https://'.")
-            self.set_progress("Error: URL no es HTTPS.", "red")
-            return
-        # Extraer la IP/dominio de la URL para usarla en network_security_config.xml
-        backend_host_match = re.search(r'https?://([^:/]+)', backend_url_gui)
-        backend_host = backend_host_match.group(1) if backend_host_match else "localhost" # Fallback
+        if not os.path.exists(libro_dir):
+             messagebox.showerror("Error", f"No se encontró el paquete de contenido para '{nombre}'. Por favor, 'Generar Paquete' primero.")
+             return
 
-        safe_log(self.logbox, f"DEBUG: URL de backend para network_security_config: {backend_url_gui}")
-        # --- FIN DE VALIDACIÓN CRÍTICA ---
-
-        # Usar el host extraído para generar network_security_config
-        # CRÍTICO: Se ha modificado para usar cleartextTrafficPermitted
-        generar_network_security_config(self.logbox, backend_host)
-        time.sleep(0.1)
-
-        # PASO CRÍTICO: Actualizar el paquete en MainActivity.java y su estructura de carpetas
+        paquete_www_dir = os.path.join(libro_dir)
+        capacitor_www_dir = WWW_DIR
+        if os.path.exists(capacitor_www_dir): shutil.rmtree(capacitor_www_dir)
+        shutil.copytree(paquete_www_dir, capacitor_www_dir, dirs_exist_ok=True)
+        safe_log(self.logbox, f"✓ Contenido web copiado a '{capacitor_www_dir}'.")
+        
         try:
-            # El nombre del paquete Android será com.libros3dar.nombre_limpio
-            nombre_paquete_limpio = limpiar_nombre(self.nombre_libro.get().strip())
-            # AHORA SE LLAMA LA NUEVA FUNCIÓN PARA HABILITAR JAVASCRIPT
-            configurar_webview_camera_completo(self.logbox, ANDROID_DIR, nombre_paquete_limpio)
+            backend_url_gui = self.backend_url.get().strip()
+            backend_host = re.search(r'https?://([^:/]+)', backend_url_gui).group(1) if re.search(r'https?://([^:/]+)', backend_url_gui) else None
+            
+            crear_archivos_adicionales_android(self.logbox, backend_host)
+            configurar_webview_camera_completo(self.logbox, ANDROID_DIR, nombre)
+            self.generar_iconos()
+            
         except Exception as e:
-            self.set_progress("Fallo al actualizar MainActivity.java.", "red")
-            messagebox.showerror("Error", f"No se pudo actualizar MainActivity.java: {e}")
-            return
-
-        # PASO CRÍTICO: Aplicar el build.gradle corregido automáticamente
-        try:
-            aplicar_build_gradle_corregido(self.logbox, nombre) # Pasamos el nombre limpio del paquete
-        except Exception as e:
-            self.set_progress("Fallo al aplicar build.gradle corregido.", "red")
-            messagebox.showerror("Error", f"No se pudo aplicar el build.gradle corregido: {e}")
-            return
-
-        # Generar íconos *después* de que la plantilla haya sido copiada y el manifest corregido
-        if not self.generar_iconos():
-            self.set_progress("Fallo iconos", "red")
+            self.set_progress("Error durante la configuración de Android.", "red")
+            messagebox.showerror("Error de Configuración", f"Falló la configuración: {e}")
             return
         
         self.set_progress(f"Iniciando compilación del APK para '{nombre}'...")
         
-        # Iniciar la compilación en un hilo separado para no congelar la GUI
-        final_apk_dest_dir = os.path.join(OUTPUT_APK_DIR, nombre)
-        threading.Thread(target=self.build_flow_thread, args=(nombre, PROJECT_DIR, ANDROID_DIR, final_apk_dest_dir), daemon=True).start()
+        try:
+            threading.Thread(target=self.build_flow_thread, args=(nombre,), daemon=True).start()
+        except Exception as e:
+            safe_log(self.logbox, f"✗ ERROR CRÍTICO al iniciar el hilo de compilación: {e}")
+            messagebox.showerror("Error Crítico", f"No se pudo iniciar el proceso: {e}")
 
-    def build_flow_thread(self, nombre, project_dir_arg, android_dir_arg, final_apk_dest_dir):
+    def build_flow_thread(self, nombre_paquete_limpio):
         """
-        Hilo principal que coordina la instalación de plugins, la sincronización de Capacitor y la compilación de Gradle.
+        Hilo principal que coordina la instalación de plugins y la compilación unificada del APK.
         """
-        self.set_progress(f"Sincronizando Capacitor y compilando APK para '{nombre}'...")
-        safe_log(self.logbox, "======== INICIANDO FLUJO DE BUILD DE APK (SYNC + GRADLE) ========")
+        self.set_progress(f"Compilando APK para '{nombre_paquete_limpio}'...")
+        safe_log(self.logbox, "======== INICIANDO FLUJO DE BUILD DE APK ========")
 
         try:
-            original_cwd = os.getcwd() # Guardar el directorio actual
-            os.chdir(project_dir_arg) # Cambiar al directorio del proyecto Capacitor
-
-            # Paso 0: Instalar dependencias de npm
-            safe_log(self.logbox, "Ejecutando 'npm install' para asegurar todas las dependencias...")
-            npm_install_cmd = "npm install"
-            proc_npm_install = subprocess.run(npm_install_cmd, capture_output=True, text=True, encoding="utf-8", check=True, shell=True)
-            safe_log(self.logbox, "✓ Dependencias de npm instaladas/verificadas.")
-
-            # Paso 1: Sincronizar con Capacitor
-            if not ejecutar_cap_sync(self.logbox, project_dir_arg, update=True): # Pasa update=True
-                self.set_progress("✗ Sincronización Capacitor fallida.", "red")
-                safe_log(self.logbox, "======== BUILD APK FALLIDO (SYNC) ========")
-                os.chdir(original_cwd) # Asegurarse de volver al directorio original
-                return
+            safe_log(self.logbox, "Ejecutando 'npm install'...")
+            subprocess.run("npm install", cwd=PROJECT_DIR, check=True, shell=True, capture_output=True, text=True)
+            safe_log(self.logbox, "✓ Dependencias de npm instaladas.")
             
-            # Asegurar que capacitor.js esté presente
-            ensure_capacitor_js(self.logbox, project_dir_arg)
+            # Usar la nueva función corregida
+            apk_path = compilar_apk_con_limpieza_espacio(self.logbox, nombre_paquete_limpio)
 
-            # AÑADIDO: Pequeño retraso para dar tiempo a que los cambios del sync se asienten
-            time.sleep(5) # Espera 5 segundos
-
-            # Paso 2: Ejecutar la compilación de Gradle
-            if not ejecutar_gradle_build(self.logbox, project_dir_arg, android_dir_arg):
-                self.set_progress("✗ Build de Gradle fallido.", "red")
-                safe_log(self.logbox, "======== BUILD APK FALLIDO (GRADLE) ========")
-                return
-
-            # Verificar si el APK se generó
-            apk_output_dir = os.path.join(android_dir_arg, "app", "build", "outputs", "apk", "debug")
-            apk_file = None
-            for root, _, files in os.walk(apk_output_dir):
-                for file in files:
-                    if file.endswith("-debug.apk"):
-                        apk_file = os.path.join(root, file)
-                        break
-                if apk_file:
-                    break
-
-            if apk_file and os.path.exists(apk_file):
-                os.makedirs(final_apk_dest_dir, exist_ok=True)
-                final_apk_path = os.path.join(final_apk_dest_dir, f"{nombre}-debug.apk")
-                shutil.copy2(apk_file, final_apk_path)
-                safe_log(self.logbox, f"✓ APK copiado a: {final_apk_path}")
-
+            if apk_path:
+                final_apk_dest_dir = os.path.join(OUTPUT_APK_DIR, nombre_paquete_limpio)
                 claves_str = "\n".join(self.claves) if self.claves else ""
                 if claves_str:
                     clave_file = os.path.join(final_apk_dest_dir, "claves-activacion.txt")
@@ -1571,114 +2015,74 @@ bpy.ops.export_scene.gltf(filepath=r'{destino}', export_format='GLB', export_app
                         f.write(claves_str)
                     safe_log(self.logbox, f"✓ Archivo de claves creado en: {clave_file}")
                 
-                # Mover el backend también a la carpeta final
-                backend_source_path = os.path.join(OUTPUT_APK_DIR, "backend_activacion.py")
-                if os.path.exists(backend_source_path):
-                    shutil.move(backend_source_path, os.path.join(final_apk_dest_dir, "backend_activacion.py"))
-                    safe_log(self.logbox, f"✓ Backend de prueba movido a la carpeta del paquete.")
-
-
                 self.set_progress("✅ ¡APK generado y build terminado!", "green")
                 safe_log(self.logbox, "======== BUILD APK COMPLETADO ========")
-                messagebox.showinfo(
-                    "Éxito",
-                    f"APK generado y copiado a: {final_apk_path}\nEl APK está firmado (debug) y listo para instalar.\nPara firma release, configura tu keystore en generador_apk.ps1 (o usa Android Studio para la firma de lanzamiento)."
-                )
+                messagebox.showinfo("Éxito", f"APK generado y copiado a: {apk_path}")
             else:
-                self.set_progress("✗ APK no encontrado después del build.", "red")
-                safe_log(self.logbox, "✗ ERROR: Archivo APK no encontrado después de la compilación de Gradle.")
-                messagebox.showerror("Error de compilación", "El archivo APK no se generó. Revisa el log para más detalles.")
-        except subprocess.CalledProcessError as e:
-            safe_log(self.logbox, f"✗ ERROR CRÍTICO durante el build: El comando '{e.cmd}' falló.")
-            safe_log(self.logbox, f"  Código de Salida: {e.returncode}")
-            safe_log(self.logbox, f"  --- Salida Estándar (stdout) ---")
-            safe_log(self.logbox, e.stdout or " (vacío)")
-            safe_log(self.logbox, f"  --- Salida de Error (stderr) ---")
-            safe_log(self.logbox, e.stderr or " (vacío)")
-            messagebox.showerror("Error de Compilación", f"El comando '{e.cmd}' falló. Revisa el log para más detalles.")
+                self.set_progress("✗ Build de APK fallido.", "red")
+                safe_log(self.logbox, "======== BUILD APK FALLIDO ========")
+                messagebox.showerror("Error de compilación", "La compilación del APK falló. Revisa el log.")
+
         except Exception as e:
-            safe_log(self.logbox, f"✗ Error crítico inesperado en build_flow_thread: {e}")
-            messagebox.showerror("Error Crítico", f"Ocurrió un error inesperado durante la compilación del APK: {e}")
-        finally:
-            # Asegurarse de volver al directorio original, sin importar dónde falló
-            if os.getcwd() != original_cwd:
-                os.chdir(original_cwd)
-                safe_log(self.logbox, f"Vuelto a directorio original: {os.getcwd()}")
+            safe_log(self.logbox, f"✗ Error crítico en build_flow_thread: {e}")
+            messagebox.showerror("Error Crítico", f"Error inesperado durante la compilación: {e}")
 
+    def iniciar_servidor_ngrok(self):
+        """Inicia el servidor Flask y el túnel de ngrok en un hilo separado."""
+        safe_log(self.logbox, "Iniciando servidor local y túnel de ngrok...")
+        self.set_progress("Iniciando servidor y ngrok...")
+        # Run in a separate thread to not block the GUI
+        threading.Thread(target=self._run_server_and_ngrok_thread, daemon=True).start()
 
-    # Se mantiene la función build_thread original por si acaso, aunque no se usará en el flujo principal
-    # (Esta función usa un script de PowerShell, la nueva implementación usa Gradle directo desde Python)
-    def build_thread(self, nombre, portada_path, ps_script_arg, project_dir_arg, android_dir_arg):
+    def _run_server_and_ngrok_thread(self):
         """
-        [DEPRECADO] Hilo para ejecutar el script de PowerShell para la compilación del APK.
-        Ahora se prefiere 'build_flow_thread'.
+        El hilo que realmente corre el servidor y ngrok.
         """
-        if not os.path.exists(LOGS_DIR):
-            os.makedirs(LOGS_DIR)
-        if not os.path.exists(os.path.join(project_dir_arg, "www", "index.html")):
-            safe_log(self.logbox, "✗ ERROR: Falta index.html en www. Aborta build.")
-            messagebox.showerror("Build abortado", "Falta index.html en www. El build no puede continuar.")
+        if not os.path.exists(WWW_DIR) or not os.listdir(WWW_DIR):
+            safe_log(self.logbox, "✗ ERROR: El directorio 'www' está vacío. Genere un paquete primero.")
+            self.set_progress("Error: Directorio 'www' vacío.", "red")
+            messagebox.showerror("Error", "El directorio 'www' está vacío. Por favor, genere un paquete antes de iniciar el servidor.")
             return
-        if not os.path.exists(ps_script_arg):
-            safe_log(self.logbox, f"✗ ERROR: Falta script {ps_script_arg}")
-            messagebox.showerror("Build abortado", f"El script PowerShell no existe: {ps_script_path}")
-            return
-        if not os.path.exists(portada_path):
-            safe_log(self.logbox, f"✗ ERROR: Falta portada en {portada_path}")
-            messagebox.showerror("Build abortado", f"La portada no existe: {portada_path}")
-            return
-        safe_log(self.logbox, "======== INICIANDO BUILD DE APK (VIA POWERSHELL) ========")
-        claves_str = ",".join(self.claves) if self.claves else ""
-        env = os.environ.copy()
-        env["ANDROID_HOME"] = r"D:\androidstudio\sdk"
-        env["JAVA_HOME"] = r"D:\androidstudio\jbr"
+
+        # Define a simple Flask app to serve the 'www' directory
+        app = Flask(__name__)
+
+        @app.route('/<path:path>')
+        def serve_static(path):
+            return send_from_directory(WWW_DIR, path)
+
+        @app.route('/')
+        def serve_index():
+            return send_from_directory(WWW_DIR, 'index.html')
         
-        cmd = [
-            "powershell.exe",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-            ps_script_arg,
-            "-PaqueteNombre",
-            nombre,
-            "-PortadaPath",
-            "-Claves",
-            claves_str,
-            "-ProjectDir",
-            project_dir_arg,
-            "-AndroidDir",
-            android_dir_arg
-        ]
+        @app.route('/activar', methods=['POST'])
+        def activar_ruta():
+            # Simulación de la respuesta del backend para pruebas locales
+            return jsonify({"valid": True, "message": "Activado exitosamente (simulado)"})
+
+        # Start Flask in a separate thread, ensuring debug/reloader are off to prevent threading issues.
+        flask_thread = threading.Thread(target=lambda: app.run(port=5001, host='0.0.0.0', debug=False, use_reloader=False), daemon=True)
+        flask_thread.start()
+        safe_log(self.logbox, "✓ Servidor Flask de prueba iniciado en http://localhost:5001")
+        
+        # Start ngrok tunnel
         try:
-            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", env=env, shell=True)
-            for line in iter(proc.stdout.readline, ""):
-                safe_log(self.logbox, line.rstrip())
-                self.set_progress(f"Compilando: {line.strip()[:100]}")
-            proc.wait()
-            if proc.returncode == 0:
-                self.set_progress("✅ ¡APK generado y build terminado!", "green")
-                safe_log(self.logbox, "======== BUILD APK COMPLETADO ========")
-                apk_output_dir = os.path.join(OUTPUT_APK_DIR, nombre)
-                apk_path = os.path.join(apk_output_dir, f"{nombre}-debug.apk")
-                mensaje = "APK generado. "
-                if os.path.exists(apk_path):
-                    mensaje += f"Archivo: {apk_path}"
-                else:
-                    mensaje += f"Revisa: {OUTPUT_APK_DIR}"
-                messagebox.showinfo(
-                    "Éxito",
-                    mensaje + "\nEl APK está firmado (debug) y listo para instalar.\nPara firma release, configura tu keystore en generador_apk.ps1.",
-                )
-            else:
-                logs = [os.path.join(LOGS_DIR, f) for f in os.listdir(LOGS_DIR) if f.endswith(".log")]
-                logs.sort(key=os.path.getmtime, reverse=True)
-                mensaje_logs = f"\nVerifica el log: {logs[0]}" if logs else ""
-                self.set_progress(f"✗ Build falló. Error: {proc.returncode}", "red")
-                safe_log(self.logbox, f"======== BUILD APK FALLIDO ({proc.returncode}) ========{mensaje_logs}")
-                messagebox.showerror("Compilación", "La compilación falló. Revisa el log." + mensaje_logs)
+            # You might need to add your ngrok authtoken via the command line first:
+            # ngrok config add-authtoken <YOUR_TOKEN>
+            public_url = ngrok.connect(5001, "http")
+            ngrok_url = public_url.public_url
+            safe_log(self.logbox, f"✓ Túnel de ngrok creado. URL pública: {ngrok_url}")
+            safe_log(self.logbox, "-> Usa esta URL en el campo 'URL Backend' para pruebas en dispositivos.")
+            self.set_progress("Servidor y ngrok iniciados.", "green")
+            
+            # Update the backend_url entry with the new ngrok url for the activation endpoint
+            self.backend_url.set(f"{ngrok_url}/activar")
+
         except Exception as e:
-            safe_log(self.logbox, f"✗ Error en build: {e}")
-            messagebox.showerror("Error crítico", str(e))
+            safe_log(self.logbox, f"✗ ERROR al iniciar ngrok: {e}")
+            safe_log(self.logbox, "  Asegúrate de que ngrok esté instalado y que tu authtoken esté configurado globalmente.")
+            self.set_progress("Error al iniciar ngrok.", "red")
+            messagebox.showerror("Error de Ngrok", f"No se pudo iniciar ngrok. Asegúrate de que esté configurado correctamente.\nError: {e}")
 
 def generar_network_security_config(logbox, backend_host):
     """
@@ -1707,55 +2111,73 @@ def generar_network_security_config(logbox, backend_host):
         safe_log(logbox, f"✗ ERROR al generar network_security_config.xml: {e}")
         raise
 
-def aplicar_build_gradle_corregido(logbox, nombre):
-    """
-    Modifica inteligentemente el build.gradle del proyecto Android para asegurar compatibilidad,
-    preservando las dependencias de los plugins de Capacitor.
-    - Asegura que el namespace esté presente.
-    - Fija las versiones de SDK a las requeridas.
-    """
-    build_gradle_path = os.path.join(ANDROID_DIR, "app", "build.gradle")
-    application_id = f"com.libros3dar.{nombre}"
+def configurar_gradle_build(logbox, nombre_paquete_limpio):
+    '''
+    Configura el archivo build.gradle (Module: app) con las dependencias y configuraciones correctas para AR.
+    '''
+    gradle_file = os.path.join(ANDROID_DIR, "app", "build.gradle")
     
-    safe_log(logbox, f"Modificando inteligentemente build.gradle en: {build_gradle_path}")
+    # El applicationId debe coincidir con el del Manifest y capacitor.config.json
+    application_id = f"com.libros3dar.{nombre_paquete_limpio}"
 
+    gradle_content = f'''apply plugin: 'com.android.application'
+
+android {{
+    namespace "{application_id}"
+    compileSdkVersion 34
+    defaultConfig {{
+        applicationId "{application_id}"
+        minSdkVersion 24
+        targetSdkVersion 34
+        versionCode 1
+        versionName "1.0"
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+    }}
+    buildTypes {{
+        release {{
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }}
+    }}
+    compileOptions {{
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }}
+    packagingOptions {{
+        exclude 'META-INF/DEPENDENCIES'
+        exclude 'META-INF/LICENSE'
+        exclude 'META-INF/LICENSE.txt'
+        exclude 'META-INF/license.txt'
+        exclude 'META-INF/NOTICE'
+        exclude 'META-INF/NOTICE.txt'
+        exclude 'META-INF/notice.txt'
+        exclude 'META-INF/ASL2.0'
+        exclude("META-INF/*.kotlin_module")
+    }}
+}}
+
+repositories {{
+    google()
+    mavenCentral()
+}}
+
+dependencies {{
+    implementation fileTree(dir: 'libs', include: ['*.jar'])
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation project(':capacitor-android')
+    testImplementation 'junit:junit:4.13.2'
+    androidTestImplementation 'androidx.test.ext:junit:1.1.5'
+    androidTestImplementation 'androidx.test.espresso:espresso-core:3.5.1'
+    implementation 'androidx.webkit:webkit:1.7.0'
+}}
+'''
+    
     try:
-        with open(build_gradle_path, "r", encoding="utf-8") as f:
-            content = f.read()
-
-        # 1. Asegurar compileSdkVersion
-        content = re.sub(r'compileSdkVersion \d+', 'compileSdkVersion 35', content)
-        safe_log(logbox, "  - compileSdkVersion fijado a 35.")
-
-        # 2. Asegurar targetSdkVersion
-        content = re.sub(r'targetSdkVersion \d+', 'targetSdkVersion 35', content)
-        safe_log(logbox, "  - targetSdkVersion fijado a 35.")
-        
-        # 3. Asegurar minSdkVersion
-        content = re.sub(r'minSdkVersion \d+', 'minSdkVersion 23', content)
-        safe_log(logbox, "  - minSdkVersion fijado a 23.")
-
-        # 4. Asegurar el namespace. Esto es CRÍTICO para builds recientes.
-        # Si 'namespace' no está, lo insertamos. Si está, lo actualizamos.
-        if 'namespace' not in content:
-            # Insertar el namespace justo después de 'android {'
-            content = re.sub(r'(android\s*{)', rf'\1\n    namespace "{application_id}"', content, 1)
-            safe_log(logbox, f"  - Namespace insertado: {application_id}")
-        else:
-            # Si ya existe, lo reemplazamos para asegurar que es el correcto
-            content = re.sub(r'namespace\s+".+"', f'namespace "{application_id}"', content)
-            safe_log(logbox, f"  - Namespace actualizado a: {application_id}")
-
-        with open(build_gradle_path, "w", encoding="utf-8") as f:
-            f.write(content)
-        
-        safe_log(logbox, f"✓ build.gradle modificado exitosamente.")
-
-    except FileNotFoundError:
-        safe_log(logbox, f"✗ ERROR: No se encontró el archivo build.gradle en {build_gradle_path}. Esto no debería pasar si la sincronización de Capacitor fue exitosa.")
-        raise
+        with open(gradle_file, 'w', encoding='utf-8') as f:
+            f.write(gradle_content)
+        safe_log(logbox, "✓ build.gradle configurado correctamente con dependencias AR.")
     except Exception as e:
-        safe_log(logbox, f"✗ ERROR al modificar build.gradle: {e}")
+        safe_log(logbox, f"✗ ERROR configurando build.gradle: {e}")
         raise
 
 def ensure_capacitor_js(logbox, project_dir):
@@ -1790,3 +2212,4 @@ if __name__ == "__main__":
     root = Tk()
     app = GeneradorGUI(root)
     root.mainloop()
+
