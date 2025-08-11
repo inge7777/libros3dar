@@ -960,17 +960,17 @@ android.suppressUnsupportedCompileSdk=34
                 if result.returncode == 0:
                     safe_log(logbox, "✓ ¡APK COMPILADO EXITOSAMENTE USANDO DISCO D!")
                     
-                    # Buscar y copiar APK desde la nueva ubicación en el disco D
-                    # Esta ruta debe coincidir con la configurada en `configurar_gradle_en_disco_d`
-                    new_build_dir = os.path.join("D:", os.sep, "android_builds", nombre_paquete_limpio)
-                    apk_src = os.path.join(new_build_dir, "outputs", "apk", "debug", "app-debug.apk")
+                    # Buscar y copiar APK desde la ruta de salida estándar de Gradle
+                    apk_origen = os.path.join(
+                        ANDROID_DIR, "app", "build", "outputs", "apk", "debug", "app-debug.apk"
+                    )
                     
-                    if os.path.exists(apk_src):
+                    if os.path.exists(apk_origen):
                         apk_dst_dir = os.path.join(OUTPUT_APK_DIR, nombre_paquete_limpio)
                         os.makedirs(apk_dst_dir, exist_ok=True)
                         apk_dst_file = os.path.join(apk_dst_dir, f"{nombre_paquete_limpio}.apk")
                         
-                        shutil.copy2(apk_src, apk_dst_file)
+                        shutil.copy2(apk_origen, apk_dst_file)
                         safe_log(logbox, f"✓ APK copiado exitosamente a: {apk_dst_file}")
                         
                         # Verificar tamaño del APK
@@ -988,13 +988,16 @@ android.suppressUnsupportedCompileSdk=34
                         
                         return apk_dst_file
                     else:
-                        safe_log(logbox, f"✗ APK no encontrado en: {apk_src}")
+                        safe_log(logbox, f"✗ No se encontró el APK en la ruta estándar: {apk_origen}")
                         # Listar archivos en directorio de salida para debug
                         output_dir = os.path.join(ANDROID_DIR, "app", "build", "outputs")
                         if os.path.exists(output_dir):
                             safe_log(logbox, f"Contenido de {output_dir}:")
                             for item in os.listdir(output_dir):
                                 safe_log(logbox, f"  - {item}")
+                                if os.path.isdir(os.path.join(output_dir, item)):
+                                    for subitem in os.listdir(os.path.join(output_dir, item)):
+                                        safe_log(logbox, f"    - {subitem}")
                 else:
                     # Analizar errores
                     safe_log(logbox, f"✗ Build falló con código: {result.returncode}")
