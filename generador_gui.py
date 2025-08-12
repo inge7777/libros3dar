@@ -67,17 +67,17 @@ import unicodedata # Importar unicodedata para limpiar_nombre
 def limpiar_nombre(nombre: str) -> str:
     """
     Normaliza un nombre para que sea compatible con nombres de archivos/carpetas
-    y paquetes Java/Android, eliminando caracteres problemáticos.
+    y paquetes Java/Android, eliminando caracteres problemáticos y convirtiendo a minúsculas.
     """
-    s = unicodedata.normalize("NFKD", nombre).encode("ASCII", "ignore").decode()
-    s = s.replace("ñ", "n").replace("Ñ", "N")
+    s = unicodedata.normalize('NFKD', nombre).encode('ascii', 'ignore').decode()
     # Elimina cualquier carácter que no sea alfanumérico o guion bajo
-    s = re.sub(r"[^a-zA-Z0-9_]", "", s)
-    # Limita la longitud para evitar problemas en sistemas de archivos o Android
-    return s[:50]
+    s = re.sub(r'[^a-zA-Z0-9_]', '', s)
+    # Retorna en minúsculas y limitado en longitud
+    return s.lower()[:50]
 
-def get_package_name(nombre_limpio):
-    return f"com.libros3dar.{nombre_limpio.lower()}"
+def get_package_name(nombre_limpio: str) -> str:
+    """Genera el nombre del paquete de Android."""
+    return f"com.librosdar.{nombre_limpio}"
 
 def preparar_rutas_java(package_name):
     java_dir = os.path.join(ANDROID_DIR, "app", "src", "main", "java", *package_name.split('.'))
@@ -288,14 +288,18 @@ def insertar_claves_en_backend(logbox, claves: list):
         safe_log(logbox, f"✗ ERROR CRÍTICO insertando claves en SQLite: {e}")
         raise Exception(f"Error insertando claves en SQLite: {e}")
 
-def corregir_android_manifest(logbox, nombre_paquete_limpio):
+def corregir_android_manifest(logbox, package_name):
     '''
-    Reconstruye AndroidManifest.xml con todos los permisos y features necesarios para AR.
+    Reconstruye AndroidManifest.xml con el package name correcto y todos los permisos
+    y features necesarios para AR.
     '''
     if not os.path.exists(os.path.dirname(ANDROID_MANIFEST)):
         safe_log(logbox, f"Error: El directorio para AndroidManifest.xml no existe. Abortando.")
         return
 
+    # El namespace ahora se define exclusivamente en build.gradle.
+    # Se elimina el atributo 'package' del manifest para cumplir con las nuevas
+    # directivas del Android Gradle Plugin.
     manifest_content = f'''<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
@@ -351,7 +355,7 @@ def corregir_android_manifest(logbox, nombre_paquete_limpio):
     try:
         with open(ANDROID_MANIFEST, 'w', encoding='utf-8') as f:
             f.write(manifest_content)
-        safe_log(logbox, f"✓ AndroidManifest.xml corregido para: {nombre_paquete_limpio}")
+        safe_log(logbox, f"✓ AndroidManifest.xml corregido para: {package_name}")
     except Exception as e:
         safe_log(logbox, f"✗ ERROR escribiendo AndroidManifest.xml: {e}")
         raise
@@ -1848,138 +1852,76 @@ class GeneradorGUI:
 </html>"""
 
     def generate_ar_viewer_html(self, nombre, marcadores_ar_html):
-        # El HTML proporcionado en el análisis es el más completo y robusto.
+        # HTML based on the user's latest specification for a robust AR viewer.
         return f"""
 <!DOCTYPE html>
-<html>
+<html lang="es">
 <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>AR Experience - {nombre}</title>
-    <script src="https://aframe.io/releases/1.3.0/aframe.min.js"></script>
-    <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
-    <style>
-        body {{ margin: 0; font-family: Arial, sans-serif; overflow: hidden; }}
-        .arjs-loader {{
-            height: 100%; width: 100%; position: absolute; top: 0; left: 0;
-            background-color: rgba(0, 0, 0, 0.8); z-index: 9999;
-            display: flex; justify-content: center; align-items: center;
-        }}
-        .arjs-loader div {{
-            text-align: center; font-size: 1.25em; color: white;
-        }}
-    </style>
+  <meta charset="utf-8">
+  <title>Visor AR - {nombre}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
+  <script src="https://cdn.rawgit.com/jeromeetienne/AR.js/3.3.2/aframe/build/aframe-ar.min.js"></script>
+  <style>
+    body {{ margin: 0; overflow: hidden; }}
+    #backBtn {{
+      position: fixed;
+      top: 10px;
+      left: 10px;
+      z-index: 999;
+      font-size: 18px;
+      padding: 6px 12px;
+      background: rgba(0,0,0,0.5);
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+    }}
+    .arjs-loader {{
+        height: 100%; width: 100%; position: absolute; top: 0; left: 0;
+        background-color: rgba(0, 0, 0, 0.8); z-index: 9999;
+        display: flex; justify-content: center; align-items: center;
+    }}
+    .arjs-loader div {{
+        text-align: center; font-size: 1.25em; color: white;
+    }}
+  </style>
 </head>
 <body>
-    <div class="arjs-loader">
-        <div>Cargando AR, por favor espere...</div>
-    </div>
+  <div class="arjs-loader"><div>Cargando AR, por favor espere...</div></div>
+  <button id="backBtn" onclick="window.location.href='main-menu.html'">Volver</button>
+  <a-scene
+      embedded
+      arjs="trackingMethod: best; sourceType: webcam; debugUIEnabled: false;"
+      vr-mode-ui="enabled: false;"
+      renderer="logarithmicDepthBuffer: true; colorManagement: true; sortObjects: true;">
     
-    <a-scene
-        embedded
-        arjs="sourceType: webcam; debugUIEnabled: false; trackingMethod: best;"
-        vr-mode-ui="enabled: false;"
-        renderer="logarithmicDepthBuffer: true; colorManagement: true; sortObjects: true;"
-        gesture-detector
-        id="scene">
-        
-        {marcadores_ar_html}
-        
-        <a-entity camera></a-entity>
-    </a-scene>
-
-    <script>
-        AFRAME.registerComponent('gesture-handler', {{
-            schema: {{
-                enabled: {{ default: true }},
-                rotationFactor: {{ default: 5 }},
-                minScale: {{ default: 0.3 }},
-                maxScale: {{ default: 8 }},
-            }},
-            init: function () {{
-                this.handleScale = this.handleScale.bind(this);
-                this.handleRotation = this.handleRotation.bind(this);
-                this.isVisible = false;
-                this.initialScale = this.el.object3D.scale.clone();
-                this.scaleFactor = 1;
-                this.el.sceneEl.addEventListener('markerFound', () => (this.isVisible = true));
-                this.el.sceneEl.addEventListener('markerLost', () => (this.isVisible = false));
-            }},
-            play: function () {{
-                if (this.data.enabled) {{
-                    this.el.sceneEl.addEventListener('onefingermove', this.handleRotation);
-                    this.el.sceneEl.addEventListener('twofingermove', this.handleScale);
-                }}
-            }},
-            pause: function () {{
-                this.el.sceneEl.removeEventListener('onefingermove', this.handleRotation);
-                this.el.sceneEl.removeEventListener('twofingermove', this.handleScale);
-            }},
-            handleRotation: function (event) {{
-                if (this.isVisible) {{
-                    this.el.object3D.rotation.y += event.detail.positionChange.x * this.data.rotationFactor;
-                    this.el.object3D.rotation.x += event.detail.positionChange.y * this.data.rotationFactor;
-                }}
-            }},
-            handleScale: function (event) {{
-                if (this.isVisible) {{
-                    this.scaleFactor *= 1 + event.detail.spreadChange / event.detail.startSpread;
-                    this.scaleFactor = Math.min(Math.max(this.scaleFactor, this.data.minScale), this.data.maxScale);
-                    this.el.object3D.scale.x = this.scaleFactor * this.initialScale.x;
-                    this.el.object3D.scale.y = this.scaleFactor * this.initialScale.y;
-                    this.el.object3D.scale.z = this.scaleFactor * this.initialScale.z;
-                }}
-            }}
-        }});
-
-        AFRAME.registerComponent('gesture-detector', {{
-            init: function () {{
-                this.internalState = {{ previousState: null }};
-                this.emitGestureEvent = this.emitGestureEvent.bind(this);
-                this.el.sceneEl.addEventListener('touchstart', this.updateState.bind(this));
-                this.el.sceneEl.addEventListener('touchmove', this.updateState.bind(this));
-                this.el.sceneEl.addEventListener('touchend', (evt) => {{
-                    this.internalState.previousState = null;
+    {marcadores_ar_html}
+    
+    <a-entity camera></a-entity>
+  </a-scene>
+  <script>
+    // Request camera permissions on page load
+    document.addEventListener('DOMContentLoaded', function() {{
+        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {{
+            navigator.mediaDevices.getUserMedia({{ video: true }})
+            .then(function(stream) {{
+                console.log("Camera permission granted.");
+                window.addEventListener('arjs-video-loaded', () => {{
+                    document.querySelector('.arjs-loader').style.display = 'none';
                 }});
-            }},
-            updateState: function(event) {{
-                const currentState = this.getTouchState(event);
-                const previousState = this.internalState.previousState;
-                const gestureContinues = previousState && currentState && currentState.touchCount === previousState.touchCount;
-                if (!gestureContinues) {{
-                    this.internalState.previousState = currentState;
-                    return;
-                }}
-                const eventName = ({{1: 'one', 2: 'two'}})[currentState.touchCount] + 'fingermove';
-                this.emitGestureEvent(eventName, currentState);
-                this.internalState.previousState = currentState;
-            }},
-            getTouchState: function(event) {{
-                if (event.touches.length === 0) return null;
-                const touch1 = event.touches[0];
-                const touch2 = event.touches.length > 1 ? event.touches[1] : null;
-                const spread = touch2 ? Math.hypot(touch1.pageX - touch2.pageX, touch1.pageY - touch2.pageY) : 0;
-                return {{
-                    touchCount: event.touches.length,
-                    position: {{ x: touch1.pageX, y: touch1.pageY }},
-                    spread: spread,
-                    positionChange: this.internalState.previousState ? {{
-                        x: touch1.pageX - this.internalState.previousState.position.x,
-                        y: touch1.pageY - this.internalState.previousState.position.y,
-                    }} : {{x: 0, y: 0}},
-                    startSpread: this.internalState.previousState ? this.internalState.previousState.spread : 0,
-                    spreadChange: spread - (this.internalState.previousState ? this.internalState.previousState.spread : 0),
-                }};
-            }},
-            emitGestureEvent: function(eventName, state) {{
-                this.el.sceneEl.emit(eventName, state);
-            }}
-        }});
-
-        window.addEventListener('arjs-video-loaded', () => {{
-            document.querySelector('.arjs-loader').style.display = 'none';
-        }});
-    </script>
+            }})
+            .catch(function(error) {{
+                console.error("Camera permission denied.", error);
+                alert("Necesitamos permiso de cámara para la Realidad Aumentada.");
+                window.location.href = 'main-menu.html';
+            }});
+        }} else {{
+            alert("Su navegador no soporta acceso a la cámara.");
+            window.location.href = 'main-menu.html';
+        }}
+    }});
+  </script>
 </body>
 </html>"""
 
@@ -2154,7 +2096,7 @@ bpy.ops.export_scene.gltf(filepath=r'{destino}', export_format='GLB', export_app
             set_gradle_namespace(self.logbox, package_name)
 
             # 4. Sobrescribir AndroidManifest con una plantilla limpia y válida
-            corregir_android_manifest(self.logbox, nombre)
+            corregir_android_manifest(self.logbox, package_name)
 
             # 5. Lógica restante de configuración
             backend_url_gui = self.backend_url.get().strip()
@@ -2200,6 +2142,9 @@ bpy.ops.export_scene.gltf(filepath=r'{destino}', export_format='GLB', export_app
             safe_log(self.logbox, "Ejecutando 'npm install'...")
             subprocess.run("npm install", cwd=PROJECT_DIR, check=True, shell=True, capture_output=True, text=True)
             safe_log(self.logbox, "✓ Dependencias de npm instaladas.")
+
+            # Asegurarse de que capacitor.js esté presente en www/
+            ensure_capacitor_js(self.logbox, PROJECT_DIR)
             
             # Usar la nueva función para compilar usando el disco D
             apk_path = compilar_apk_usando_disco_d(self.logbox, nombre_paquete_limpio)
