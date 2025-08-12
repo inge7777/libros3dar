@@ -50,6 +50,7 @@ OUTPUT_APK_DIR = os.path.join(BASE_DIR, "output-apk")
 GEN_DIR = os.path.join(BASE_DIR, "generador")
 # Rutas a ejecutables externos
 BLENDER_PATH = r"D:\amazonlibro\blender 3d\blender.exe"
+NFT_CREATOR_PATH = r"D:\libros3dar2\nft crator\NFT-Marker-Creator"
 
 # Rutas a archivos clave dentro del proyecto Android
 ICONO_BASE_DIR = os.path.join(ANDROID_DIR, "app", "src", "main", "res")
@@ -89,13 +90,105 @@ def preparar_rutas_java(package_name):
 def crear_main_activity(package_name):
     ruta = preparar_rutas_java(package_name)
     codigo = f"""package {package_name};
+
+import android.os.Bundle;
+import android.widget.Toast;
 import com.getcapacitor.BridgeActivity;
+
 public class MainActivity extends BridgeActivity {{
+
+    @Override
+    public void onResume() {{
+        super.onResume();
+        // Verificar y solicitar permisos de cámara al reanudar la actividad.
+        // Esto es crucial para la funcionalidad de AR.
+        if (!CameraPermissionHelper.hasCameraPermission(this)) {{
+            CameraPermissionHelper.requestCameraPermission(this);
+        }}
+    }}
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] results) {{
+        super.onRequestPermissionsResult(requestCode, permissions, results);
+
+        // Si el permiso de la cámara no fue concedido, mostrar un mensaje y cerrar la app.
+        if (!CameraPermissionHelper.hasCameraPermission(this)) {{
+            Toast.makeText(this, "El permiso de cámara es necesario para usar la Realidad Aumentada.", Toast.LENGTH_LONG).show();
+            finish();
+        }}
+    }}
 }}
 """
     with open(ruta, "w", encoding="utf-8") as f:
         f.write(codigo)
     return ruta
+
+def crear_camera_permission_helper(logbox, package_name):
+    """
+    Crea el archivo CameraPermissionHelper.java en el paquete correcto.
+    """
+    helper_code = f"""package {package_name};
+
+import android.Manifest;
+import android.app.Activity;
+import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.net.Uri;
+import android.provider.Settings;
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
+
+/**
+ * Helper para solicitar el permiso de cámara en tiempo de ejecución.
+ */
+public final class CameraPermissionHelper {{
+  private static final int CAMERA_PERMISSION_CODE = 0;
+  private static final String CAMERA_PERMISSION = Manifest.permission.CAMERA;
+
+  /**
+   * Verifica si la app tiene el permiso de cámara.
+   */
+  public static boolean hasCameraPermission(Activity activity) {{
+    return ContextCompat.checkSelfPermission(activity, CAMERA_PERMISSION)
+        == PackageManager.PERMISSION_GRANTED;
+  }}
+
+  /**
+   * Solicita el permiso de cámara si aún no se ha concedido.
+   */
+  public static void requestCameraPermission(Activity activity) {{
+    ActivityCompat.requestPermissions(
+        activity, new String[]{{CAMERA_PERMISSION}}, CAMERA_PERMISSION_CODE);
+  }}
+
+  /**
+   * Verifica si se debe mostrar una justificación para solicitar el permiso.
+   * (No se usa en el flujo actual, pero es buena práctica tenerlo).
+   */
+  public static boolean shouldShowRequestPermissionRationale(Activity activity) {{
+    return ActivityCompat.shouldShowRequestPermissionRationale(activity, CAMERA_PERMISSION);
+  }}
+
+  /**
+   * Lanza la configuración de la aplicación para que el usuario pueda conceder el permiso manualmente.
+   */
+  public static void launchPermissionSettings(Activity activity) {{
+    Intent intent = new Intent();
+    intent.setAction(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
+    intent.setData(Uri.fromParts("package", activity.getPackageName(), null));
+    activity.startActivity(intent);
+  }}
+}}
+"""
+    try:
+        java_dir = os.path.join(ANDROID_DIR, "app", "src", "main", "java", *package_name.split('.'))
+        helper_path = os.path.join(java_dir, "CameraPermissionHelper.java")
+        with open(helper_path, "w", encoding="utf-8") as f:
+            f.write(helper_code)
+        safe_log(logbox, f"✓ CameraPermissionHelper.java creado en: {helper_path}")
+    except Exception as e:
+        safe_log(logbox, f"✗ ERROR creando CameraPermissionHelper.java: {e}")
+        raise
 
 def actualizar_capacitor_config(logbox, package_name, app_name):
     config_path = os.path.join(PROJECT_DIR, "capacitor.config.json")
@@ -316,7 +409,7 @@ def corregir_android_manifest(logbox, package_name):
     <!-- Features de hardware requeridos y opcionales -->
     <uses-feature android:name="android.hardware.camera" android:required="true" />
     <uses-feature android:name="android.hardware.camera.autofocus" android:required="false"/>
-    <uses-feature android:name="android.hardware.camera.ar" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.ar" android:required="true" />
     <uses-feature android:glEsVersion="0x00020000" android:required="true" />
 
     <application
@@ -328,6 +421,8 @@ def corregir_android_manifest(logbox, package_name):
         android:usesCleartextTraffic="true"
         android:networkSecurityConfig="@xml/network_security_config"
         android:hardwareAccelerated="true">
+
+        <meta-data android:name="com.google.ar.core" android:value="required" />
 
         <activity
             android:name=".MainActivity"
@@ -559,21 +654,19 @@ def ensure_capacitor_js(logbox, project_dir):
         shutil.copy2(src_capacitor_js, capacitor_js_path)
         safe_log(logbox, "✓ Copia manual de capacitor.js a www exitosa.")
     except Exception as e:
-        safe_log(logbox, f"✗ ERROR: Fallo al copiar manualmente capacitor.js: {e}")
+        safe_log(logbox, f"✗ ERROR: Fallo al copiar manually capacitor.js: {e}")
         messagebox.showerror("Error de Copia", f"No se pudo copiar capacitor.js: {e}")
-
-NFT_CREATOR_PATH = os.path.join(BASE_DIR, "tools", "NFT-Marker-Creator")
 
 def verificar_nft_marker_creator(logbox):
     if not os.path.exists(NFT_CREATOR_PATH):
         safe_log(logbox, "ADVERTENCIA: Directorio de NFT-Marker-Creator no encontrado.")
         return False
     
-    main_script_path = os.path.join(NFT_CREATOR_PATH, "MarkerCreator.js")
-    alt_script_path = os.path.join(NFT_CREATOR_PATH, "src", "NFTMarkerCreator.js")
+    # El script principal correcto, según la investigación, es app.js
+    main_script_path = os.path.join(NFT_CREATOR_PATH, "app.js")
     
-    if not os.path.exists(main_script_path) and not os.path.exists(alt_script_path):
-        safe_log(logbox, "ADVERTENCIA: Script principal de NFT-Marker-Creator no encontrado.")
+    if not os.path.exists(main_script_path):
+        safe_log(logbox, f"ADVERTENCIA: No se encontró el script principal 'app.js' en {NFT_CREATOR_PATH}.")
         return False
 
     try:
@@ -589,14 +682,14 @@ def generar_marcador_nft(logbox, imagen_path, nombre_marcador):
         return False
     
     try:
-        script_path = os.path.join(NFT_CREATOR_PATH, "MarkerCreator.js")
-        if not os.path.exists(script_path):
-            script_path = os.path.join(NFT_CREATOR_PATH, "src", "NFTMarkerCreator.js")
-
+        # El script principal es app.js y se debe ejecutar con node
+        script_path = os.path.join(NFT_CREATOR_PATH, "app.js")
         imagen_absoluta = os.path.abspath(imagen_path)
-        cmd = ["node", os.path.basename(script_path), "-i", imagen_absoluta]
         
-        safe_log(logbox, f"Ejecutando: {' '.join(cmd)}")
+        # Comando corregido para usar 'node app.js -i <path>'
+        cmd = ["node", "app.js", "-i", imagen_absoluta]
+        
+        safe_log(logbox, f"Ejecutando desde '{NFT_CREATOR_PATH}': {' '.join(cmd)}")
         result = subprocess.run(cmd, cwd=NFT_CREATOR_PATH, capture_output=True, text=True, shell=True, timeout=180)
         
         if result.returncode == 0 and "error" not in result.stderr.lower():
@@ -1294,6 +1387,8 @@ class GeneradorGUI:
         Scrollbar(log_frame, command=self.logbox.yview, orient=VERTICAL).pack(side=RIGHT, fill=Y)
         self.logbox.config(yscrollcommand=lambda f, l: ()) # Deshabilita el scroll automático para evitar saltos
 
+        Button(log_frame, text="Copiar Log", command=self.copy_log_to_clipboard).pack(pady=5)
+
         self.label_progreso = Label(self.root, text="Listo.", relief="sunken", anchor="w", padx=5)
         self.label_progreso.pack(side="bottom", fill="x")
 
@@ -1301,6 +1396,18 @@ class GeneradorGUI:
         """Actualiza el texto y color de la barra de progreso en la GUI."""
         self.label_progreso.config(text=text, fg=color)
         self.root.update_idletasks() # Forzar actualización de la GUI
+
+    def copy_log_to_clipboard(self):
+        """Copia todo el contenido del log al portapapeles."""
+        try:
+            log_text = self.logbox.get("1.0", "end-1c")
+            self.root.clipboard_clear()
+            self.root.clipboard_append(log_text)
+            self.set_progress("Log copiado al portapapeles.", "green")
+            safe_log(self.logbox, "✓ Log copiado al portapapeles.")
+        except Exception as e:
+            self.set_progress("Error al copiar el log.", "red")
+            safe_log(self.logbox, f"✗ Error al copiar log: {e}")
 
     def subir_portada(self):
         """Permite al usuario seleccionar una imagen de portada para el ícono del APK."""
@@ -2095,8 +2202,9 @@ bpy.ops.export_scene.gltf(filepath=r'{destino}', export_format='GLB', export_app
             app_name = self.nombre_libro.get().strip()
             safe_log(self.logbox, f"✓ Usando packageName unificado: {package_name}")
 
-            # 1. Crear MainActivity.java
+            # 1. Crear MainActivity.java y helpers
             crear_main_activity(package_name)
+            crear_camera_permission_helper(self.logbox, package_name)
 
             # 2. Actualizar capacitor.config.json
             actualizar_capacitor_config(self.logbox, package_name, app_name)
@@ -2244,5 +2352,6 @@ if __name__ == "__main__":
     root = Tk()
     app = GeneradorGUI(root)
     root.mainloop()
+
 
 
