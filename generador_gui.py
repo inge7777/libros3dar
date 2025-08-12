@@ -18,14 +18,16 @@ from string import Template # Importar Template para el manejo de plantillas HTM
 # --- Dependencias con autoinstalación ---
 try:
     from flask import Flask, send_from_directory, jsonify
+    from flask_cors import CORS
     from pyngrok import ngrok
     import cv2
     import numpy as np
     import psutil # Para verificar el espacio en disco
 except ImportError:
     print("Dependencias críticas no encontradas. Intentando instalar...")
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "Flask", "pyngrok", "opencv-python", "numpy", "Pillow", "psutil"])
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "Flask", "pyngrok", "opencv-python", "numpy", "Pillow", "psutil", "flask-cors"])
     from flask import Flask, send_from_directory, jsonify
+    from flask_cors import CORS
     from pyngrok import ngrok
     import cv2
     import numpy as np
@@ -303,19 +305,18 @@ def corregir_android_manifest(logbox, package_name):
     manifest_content = f'''<?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <!-- Permisos necesarios para AR y WebRTC -->
-    <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Permisos completos para AR, Cámara, Audio y Bluetooth (Android 12+) -->
     <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
-    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
-    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="28" />
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
 
-    <!-- Features de hardware -->
+    <!-- Features de hardware requeridos y opcionales -->
     <uses-feature android:name="android.hardware.camera" android:required="true" />
-    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false" />
-    <uses-feature android:name="android.hardware.camera.front" android:required="false" />
+    <uses-feature android:name="android.hardware.camera.autofocus" android:required="false"/>
+    <uses-feature android:name="android.hardware.camera.ar" android:required="false" />
     <uses-feature android:glEsVersion="0x00020000" android:required="true" />
 
     <application
@@ -1889,9 +1890,9 @@ class GeneradorGUI:
   <button id="backBtn" style="display: none;" onclick="window.location.href='main-menu.html'">Volver al Menú</button>
   <a-scene
       embedded
-      arjs="sourceType: webcam; detectionMode: mono_and_matrix; matrixCodeType: 3x3; debugUIEnabled: false;"
-      renderer="logarithmicDepthBuffer: true; colorManagement: true; sortObjects: true;"
-      vr-mode-ui="enabled: false">
+      arjs='sourceType: webcam; debugUIEnabled: false; trackingMethod: best;'
+      vr-mode-ui='enabled: false'
+      renderer='logarithmicDepthBuffer: true;'>
     
     {marcadores_ar_html}
     
@@ -1956,6 +1957,17 @@ bpy.ops.export_scene.gltf(filepath=r'{destino}', export_format='GLB', export_app
             if os.path.exists(temp_script):
                 os.remove(temp_script)
                 time.sleep(0.1) # Pausa después de eliminar script temporal
+
+    def integrar_frontend_ar(self, logbox):
+        """Copia el script frontend-ar.js desde GEN_DIR a www/js/ del proyecto."""
+        destino_js = os.path.join(WWW_DIR, "js")
+        os.makedirs(destino_js, exist_ok=True)
+        src = os.path.join(GEN_DIR, "frontend-ar.js")
+        if not os.path.exists(src):
+            safe_log(logbox, f"✗ No se encontró {src}, crea ese archivo primero")
+            return
+        shutil.copy2(src, destino_js)
+        safe_log(logbox, f"✓ frontend-ar.js copiado a {destino_js}")
 
     def generar_iconos(self):
         """
@@ -2023,10 +2035,10 @@ bpy.ops.export_scene.gltf(filepath=r'{destino}', export_format='GLB', export_app
                     time.sleep(0.05) # Pausa
             safe_log(self.logbox, "✓ Íconos generados en todos los mipmap del proyecto de trabajo.")
             
-            # Llama a corrige_android_manifest con el nombre del paquete limpio
-            nombre_paquete_limpio = limpiar_nombre(self.nombre_libro.get().strip())
-            # Ya que corregir_android_manifest ya no retorna la cuenta, no es necesario capturarla.
-            corregir_android_manifest(self.logbox, nombre_paquete_limpio)
+            # Llama a corrige_android_manifest con el nombre del paquete unificado
+            nombre_limpio = limpiar_nombre(self.nombre_libro.get().strip())
+            package_name = get_package_name(nombre_limpio)
+            corregir_android_manifest(self.logbox, package_name)
             time.sleep(0.1) # Pausa
             
             elimina_foreground_icons(self.logbox) # Pasar logbox
@@ -2093,13 +2105,16 @@ bpy.ops.export_scene.gltf(filepath=r'{destino}', export_format='GLB', export_app
             set_gradle_namespace(self.logbox, package_name)
 
             # 4. Sobrescribir AndroidManifest con una plantilla limpia y válida
-            corregir_android_manifest(self.logbox, package_name)
+            # La llamada a corregir_android_manifest en generar_iconos ya se encarga de esto.
+            # No es necesario llamarlo aquí de nuevo.
+            # corregir_android_manifest(self.logbox, package_name)
 
             # 5. Lógica restante de configuración
             backend_url_gui = self.backend_url.get().strip()
             backend_host = re.search(r'https?://([^:/]+)', backend_url_gui).group(1) if re.search(r'https?://([^:/]+)', backend_url_gui) else None
             crear_archivos_adicionales_android(self.logbox, backend_host)
             self.generar_iconos()
+            self.integrar_frontend_ar(self.logbox) # Inyectar el script de AR
             
         except Exception as e:
             self.set_progress("Error durante la configuración de Android.", "red")
@@ -2186,6 +2201,7 @@ bpy.ops.export_scene.gltf(filepath=r'{destino}', export_format='GLB', export_app
 
         # Define a simple Flask app to serve the 'www' directory
         app = Flask(__name__)
+        CORS(app) # Habilitar CORS para todas las rutas
 
         @app.route('/<path:path>')
         def serve_static(path):
@@ -2228,4 +2244,5 @@ if __name__ == "__main__":
     root = Tk()
     app = GeneradorGUI(root)
     root.mainloop()
+
 
