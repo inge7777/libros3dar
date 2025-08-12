@@ -465,14 +465,14 @@ def generar_network_security_config(logbox, backend_host):
         safe_log(logbox, f"✗ ERROR al generar network_security_config.xml: {e}")
         raise
 
-def configurar_gradle_build(logbox, nombre_paquete_limpio):
+def configurar_gradle_build(logbox, package_name):
     '''
     Configura el archivo build.gradle (Module: app) con las dependencias y configuraciones correctas para AR.
     '''
     gradle_file = os.path.join(ANDROID_DIR, "app", "build.gradle")
     
-    # El applicationId debe coincidir con el del Manifest y capacitor.config.json
-    application_id = f"com.libros3dar.{nombre_paquete_limpio}"
+    # El applicationId y el namespace deben ser consistentes en todo el proyecto.
+    application_id = package_name
 
     gradle_content = f'''apply plugin: 'com.android.application'
 
@@ -1050,8 +1050,7 @@ android.suppressUnsupportedCompileSdk=34
         safe_log(logbox, f"✗ ERROR CRÍTICO en compilar_apk_usando_disco_d: {e}")
         return None
 
-def configurar_webview_camera_completo(logbox, android_dir_arg, nombre_paquete_limpio):
-    package_name = f"com.libros3dar.{nombre_paquete_limpio}"
+def configurar_webview_camera_completo(logbox, android_dir_arg, package_name):
     
     java_base_dir = os.path.join(android_dir_arg, "app", "src", "main", "java")
     target_package_full_path = os.path.join(java_base_dir, *package_name.split('.'))
@@ -1701,7 +1700,7 @@ class GeneradorGUI:
         <h1>Activación Requerida</h1>
         <p>Ingresa tu código de activación para acceder al contenido AR</p>
         <input type="text" id="activationCode" placeholder="Ingresa código de activación" maxlength="19">
-        <button class="activate-btn" onclick="validateCode()">Activar</button>
+        <button id="activateBtn" class="activate-btn" onclick="validateCode()">Activar</button>
         <div id="message"></div>
     </div>
     <script>
@@ -1740,38 +1739,40 @@ class GeneradorGUI:
         }});
         
         async function validateCode() {{
+            const activateBtn = document.getElementById('activateBtn');
             const code = document.getElementById('activationCode').value.trim().toUpperCase();
             const messageDiv = document.getElementById('message');
-            messageDiv.innerHTML = 'Validando...';
+            
+            if (activateBtn.disabled) return;
+
+            activateBtn.disabled = true;
+            activateBtn.innerText = 'Validando...';
+            messageDiv.innerHTML = '';
 
             if (!code) {{
                 messageDiv.innerHTML = '<p class="error">Por favor ingresa un código</p>';
+                activateBtn.disabled = false;
+                activateBtn.innerText = 'Activar';
                 return;
             }}
 
             try {{
                 const deviceId = await getOrCreateDeviceId();
                 const payload = {{ token: code, device_id: deviceId }};
-                let result;
+                
+                const response = await fetch('{activation_url}', {{
+                    method: 'POST',
+                    headers: {{ 'Content-Type': 'application/json' }},
+                    body: JSON.stringify(payload),
+                    // Agregamos un timeout a la petición fetch
+                    signal: AbortSignal.timeout(15000) // 15 segundos
+                }});
 
-                if (window.Capacitor && Capacitor.isNativePlatform() && Capacitor.Plugins.CapacitorHttp) {{
-                    const {{ CapacitorHttp }} = Capacitor.Plugins;
-                    const response = await CapacitorHttp.request({{
-                        url: '{activation_url}',
-                        method: 'POST',
-                        headers: {{ 'Content-Type': 'application/json', 'Accept': 'application/json' }},
-                        data: payload
-                    }});
-                    result = response.data;
-                }} else {{
-                    const response = await fetch('{activation_url}', {{
-                        method: 'POST',
-                        headers: {{ 'Content-Type': 'application/json' }},
-                        body: JSON.stringify(payload)
-                    }});
-                    if (!response.ok) throw new Error(`HTTP error! status: ${{response.status}}`);
-                    result = await response.json();
+                if (!response.ok) {{
+                    throw new Error(`Error HTTP: ${{response.status}}`);
                 }}
+                
+                const result = await response.json();
 
                 if (result.valid) {{
                     messageDiv.innerHTML = '<p class="success">¡Código válido! Redirigiendo...</p>';
@@ -1780,10 +1781,14 @@ class GeneradorGUI:
                     setTimeout(() => {{ window.location.href = 'main-menu.html'; }}, 1500);
                 }} else {{
                     messageDiv.innerHTML = `<p class="error">${{result.error || 'Código inválido o ya utilizado.'}}</p>`;
+                    activateBtn.disabled = false;
+                    activateBtn.innerText = 'Activar';
                 }}
             }} catch (error) {{
-                messageDiv.innerHTML = '<p class="error">Error de conexión. Verifica tu internet y la URL del servidor.</p>';
+                messageDiv.innerHTML = '<p class="error">Error de conexión o el servidor tardó en responder. Verifica tu internet.</p>';
                 console.error('Error de activación:', error);
+                activateBtn.disabled = false;
+                activateBtn.innerText = 'Activar';
             }}
         }}
     </script>
@@ -1865,17 +1870,9 @@ class GeneradorGUI:
   <style>
     body {{ margin: 0; overflow: hidden; }}
     #backBtn {{
-      position: fixed;
-      top: 10px;
-      left: 10px;
-      z-index: 999;
-      font-size: 18px;
-      padding: 6px 12px;
-      background: rgba(0,0,0,0.5);
-      color: white;
-      border: none;
-      border-radius: 4px;
-      cursor: pointer;
+      position: fixed; top: 10px; left: 10px; z-index: 999;
+      font-size: 18px; padding: 8px 12px; background: rgba(0,0,0,0.6);
+      color: white; border: none; border-radius: 5px; cursor: pointer;
     }}
     .arjs-loader {{
         height: 100%; width: 100%; position: absolute; top: 0; left: 0;
@@ -1888,39 +1885,39 @@ class GeneradorGUI:
   </style>
 </head>
 <body>
-  <div class="arjs-loader"><div>Cargando AR, por favor espere...</div></div>
-  <button id="backBtn" onclick="window.location.href='main-menu.html'">Volver</button>
+  <div class="arjs-loader"><div>Cargando entorno de Realidad Aumentada...</div></div>
+  <button id="backBtn" style="display: none;" onclick="window.location.href='main-menu.html'">Volver al Menú</button>
   <a-scene
       embedded
-      arjs="trackingMethod: best; sourceType: webcam; debugUIEnabled: false;"
-      vr-mode-ui="enabled: false;"
-      renderer="logarithmicDepthBuffer: true; colorManagement: true; sortObjects: true;">
+      arjs="sourceType: webcam; detectionMode: mono_and_matrix; matrixCodeType: 3x3; debugUIEnabled: false;"
+      renderer="logarithmicDepthBuffer: true; colorManagement: true; sortObjects: true;"
+      vr-mode-ui="enabled: false">
     
     {marcadores_ar_html}
     
     <a-entity camera></a-entity>
   </a-scene>
   <script>
-    // Request camera permissions on page load
-    document.addEventListener('DOMContentLoaded', function() {{
-        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {{
-            navigator.mediaDevices.getUserMedia({{ video: true }})
-            .then(function(stream) {{
-                console.log("Camera permission granted.");
-                window.addEventListener('arjs-video-loaded', () => {{
-                    document.querySelector('.arjs-loader').style.display = 'none';
-                }});
-            }})
-            .catch(function(error) {{
-                console.error("Camera permission denied.", error);
-                alert("Necesitamos permiso de cámara para la Realidad Aumentada.");
-                window.location.href = 'main-menu.html';
-            }});
-        }} else {{
-            alert("Su navegador no soporta acceso a la cámara.");
-            window.location.href = 'main-menu.html';
-        }}
-    }});
+    window.onload = function() {{
+      const sceneEl = document.querySelector('a-scene');
+      const loader = document.querySelector('.arjs-loader');
+      const backBtn = document.getElementById('backBtn');
+
+      sceneEl.addEventListener('loaded', () => {{
+        loader.style.display = 'none';
+        backBtn.style.display = 'block';
+      }});
+
+      sceneEl.addEventListener('ar-camera-error', (e) => {{
+        alert('Error de cámara: No se pudo acceder al recurso. Por favor, asegúrate de que la cámara no esté siendo usada por otra aplicación y que has concedido los permisos.');
+        window.location.href = 'main-menu.html';
+      }});
+      
+      sceneEl.addEventListener('ar-init-error', (e) => {{
+        alert('Error al inicializar la Realidad Aumentada. Tu dispositivo podría no ser compatible.');
+        window.location.href = 'main-menu.html';
+      }});
+    }};
   </script>
 </body>
 </html>"""
@@ -2231,3 +2228,4 @@ if __name__ == "__main__":
     root = Tk()
     app = GeneradorGUI(root)
     root.mainloop()
+
