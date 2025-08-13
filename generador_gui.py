@@ -1915,20 +1915,25 @@ class GeneradorGUI:
     <title>{nombre} - Menú Principal</title>
     <script src="capacitor.js"></script>
     <style>
-        body {{ font-family: Arial, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); margin: 0; padding: 2rem; }}
-        .menu-container {{ max-width: 600px; margin: 0 auto; background: white; border-radius: 15px; padding: 2rem; box-shadow: 0 10px 30px rgba(0,0,0,0.2); }}
-        .menu-btn {{ width: 100%; padding: 1.5rem; margin: 1rem 0; border: none; border-radius: 10px; font-size: 1.2rem; cursor: pointer; transition: transform 0.3s, box-shadow 0.3s; }}
-        .menu-btn:hover {{ transform: translateY(-2px); box-shadow: 0 5px 15px rgba(0,0,0,0.2); }}
-        .video-btn {{ background: #2196F3; color: white; }} .explanation-btn {{ background: #FF9800; color: white; }}
-        .ar-btn {{ background: linear-gradient(45deg, #4CAF50, #45a049); color: white; font-weight: bold; font-size: 1.4rem; }}
+        body {{ font-family: Arial, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }}
+        .menu-container {{ background: white; padding: 2rem; border-radius: 15px; box-shadow: 0 10px 30px rgba(0,0,0,0.2); text-align: center; max-width: 400px; width: 90%; }}
+        .logo {{ width: 100px; height: 100px; margin: 0 auto 1rem; background: url('portada.jpg') center/cover; border-radius: 50%; }}
+        .menu-btn {{ width: 100%; padding: 1.2rem; margin: 0.8rem 0; border: none; border-radius: 8px; font-size: 1.1rem; cursor: pointer; transition: background 0.3s, transform 0.2s; }}
+        .menu-btn:hover {{ transform: translateY(-2px); }}
+        .video-btn {{ background: #2196F3; color: white; }}
+        .explanation-btn {{ background: #FF9800; color: white; }}
+        .ar-btn {{ background: #4CAF50; color: white; font-weight: bold; }}
+        .ar-btn:hover {{ background: #45a049; }}
     </style>
 </head>
 <body>
     <div class="menu-container">
-        <h1 style="text-align: center; color: #333;">Bienvenido a {nombre}</h1>
+        <div class="logo"></div>
+        <h1 style="color: #333;">{nombre}</h1>
+        <p style="margin-bottom: 2rem; color: #666;">Selecciona una opción</p>
+        <button class="menu-btn ar-btn" onclick="startAR()">📱 Iniciar Realidad Aumentada</button>
         <button class="menu-btn video-btn" onclick="openVideo()">📢 Ver Video Promocional</button>
         {explicacion_btn_html}
-        <button class="menu-btn ar-btn" onclick="startAR()">📱 Iniciar Realidad Aumentada</button>
     </div>
     <script>
         function openVideo() {{ window.open('{self.propaganda_var.get().strip()}', '_blank'); }}
@@ -1965,68 +1970,35 @@ class GeneradorGUI:
 </html>"""
 
     def generate_ar_viewer_html(self, nombre, marcadores_ar_html):
-        # HTML based on the user's latest specification for a robust AR viewer.
+        # NOTE: This function now generates a host HTML page for the new Three.js-based AR script.
+        # The 'marcadores_ar_html' parameter is kept for compatibility but is not used in this template.
         return f"""
 <!DOCTYPE html>
 <html lang="es">
 <head>
-  <meta charset="utf-8">
-  <title>Visor AR - {nombre}</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <script src="https://aframe.io/releases/1.4.2/aframe.min.js"></script>
-  <script src="https://cdn.rawgit.com/jeromeetienne/AR.js/3.3.2/aframe/build/aframe-ar.min.js"></script>
-  <style>
-    body {{ margin: 0; overflow: hidden; }}
-    #backBtn {{
-      position: fixed; top: 10px; left: 10px; z-index: 999;
-      font-size: 18px; padding: 8px 12px; background: rgba(0,0,0,0.6);
-      color: white; border: none; border-radius: 5px; cursor: pointer;
-    }}
-    .arjs-loader {{
-        height: 100%; width: 100%; position: absolute; top: 0; left: 0;
-        background-color: rgba(0, 0, 0, 0.8); z-index: 9999;
-        display: flex; justify-content: center; align-items: center;
-    }}
-    .arjs-loader div {{
-        text-align: center; font-size: 1.25em; color: white;
-    }}
-  </style>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Visor AR - {nombre}</title>
+    <style>
+        body {{ margin: 0; overflow: hidden; }}
+        canvas {{ display: block; }}
+        #backBtn {{
+            position: fixed; top: 10px; left: 10px; z-index: 999;
+            font-size: 18px; padding: 8px 12px; background: rgba(0,0,0,0.6);
+            color: white; border: none; border-radius: 5px; cursor: pointer;
+        }}
+    </style>
 </head>
 <body>
-  <div class="arjs-loader"><div>Cargando entorno de Realidad Aumentada...</div></div>
-  <button id="backBtn" style="display: none;" onclick="window.location.href='main-menu.html'">Volver al Menú</button>
-  <a-scene
-      embedded
-      arjs='sourceType: webcam; debugUIEnabled: false; trackingMethod: best;'
-      vr-mode-ui='enabled: false'
-      renderer='logarithmicDepthBuffer: true;'>
-    
-    {marcadores_ar_html}
-    
-    <a-entity camera></a-entity>
-  </a-scene>
-  <script>
-    window.onload = function() {{
-      const sceneEl = document.querySelector('a-scene');
-      const loader = document.querySelector('.arjs-loader');
-      const backBtn = document.getElementById('backBtn');
+    <button id="backBtn" onclick="window.location.href='main-menu.html'">Volver al Menú</button>
 
-      sceneEl.addEventListener('loaded', () => {{
-        loader.style.display = 'none';
-        backBtn.style.display = 'block';
-      }});
+    <!-- Scripts requeridos para la nueva implementación de AR -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/gh/mrdoob/three.js@r128/examples/js/loaders/GLTFLoader.js"></script>
+    <script src="https://raw.githack.com/AR-js-org/AR.js/master/three.js/build/ar-threex.js"></script>
 
-      sceneEl.addEventListener('ar-camera-error', (e) => {{
-        alert('Error de cámara: No se pudo acceder al recurso. Por favor, asegúrate de que la cámara no esté siendo usada por otra aplicación y que has concedido los permisos.');
-        window.location.href = 'main-menu.html';
-      }});
-      
-      sceneEl.addEventListener('ar-init-error', (e) => {{
-        alert('Error al inicializar la Realidad Aumentada. Tu dispositivo podría no ser compatible.');
-        window.location.href = 'main-menu.html';
-      }});
-    }};
-  </script>
+    <!-- El script principal que contiene la lógica de AR -->
+    <script src="js/frontend-ar.js"></script>
 </body>
 </html>"""
 
@@ -2065,16 +2037,99 @@ bpy.ops.export_scene.gltf(filepath=r'{destino}', export_format='GLB', export_app
                 os.remove(temp_script)
                 time.sleep(0.1) # Pausa después de eliminar script temporal
 
-    def integrar_frontend_ar(self, logbox):
-        """Copia el script frontend-ar.js desde GEN_DIR a www/js/ del proyecto."""
-        destino_js = os.path.join(WWW_DIR, "js")
-        os.makedirs(destino_js, exist_ok=True)
-        src = os.path.join(GEN_DIR, "frontend-ar.js")
-        if not os.path.exists(src):
-            safe_log(logbox, f"✗ No se encontró {src}, crea ese archivo primero")
-            return
-        shutil.copy2(src, destino_js)
-        safe_log(logbox, f"✓ frontend-ar.js copiado a {destino_js}")
+    def crear_y_copiar_frontend_ar(self, logbox):
+        """
+        Crea el archivo frontend-ar.js con el contenido proporcionado por el usuario
+        y lo copia a la carpeta www/js del proyecto.
+        """
+        frontend_ar_code = """
+// frontend-ar.js
+// Requiere Three.js y AR.js incluidos en tu index.html
+
+document.addEventListener('DOMContentLoaded', () => {
+    console.log('Entorno AR cargado correctamente');
+
+    // Inicializar renderer, escena y cámara
+    const scene = new THREE.Scene();
+    const camera = new THREE.Camera();
+    scene.add(camera);
+    
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    // Inicialización de ARToolkit
+    const arToolkitSource = new THREEx.ArToolkitSource({ sourceType: 'webcam' });
+
+    arToolkitSource.init(function onReady() {
+        onResize();
+    });
+
+    window.addEventListener('resize', () => {
+        onResize();
+    });
+
+    function onResize(){
+        arToolkitSource.onResizeElement();
+        arToolkitSource.copyElementSizeTo(renderer.domElement);
+        if(arToolkitContext.arController !== null){
+            arToolkitSource.copyElementSizeTo(arToolkitContext.arController.canvas);
+        }
+    }
+
+    // Configurar contexto AR
+    const arToolkitContext = new THREEx.ArToolkitContext({
+        cameraParametersUrl: '../data/camera_para.dat', // Ruta corregida
+        detectionMode: 'mono_and_matrix',
+    });
+
+    arToolkitContext.init(() => {
+        camera.projectionMatrix.copy(arToolkitContext.getProjectionMatrix());
+    });
+
+    // Grupo para marcador
+    const markerRoot = new THREE.Group();
+    scene.add(markerRoot);
+
+    // Controles de marcador (ejemplo para patrón)
+    const markerControls = new THREEx.ArMarkerControls(arToolkitContext, markerRoot, {
+        type: 'pattern',
+        patternUrl: '../patterns/pattern-marker.patt',  // Ruta de ejemplo
+    });
+
+    // Cargar modelo 3D
+    const loader = new THREE.GLTFLoader();
+    loader.load('../models/model.glb', function(gltf){ // Ruta de ejemplo
+        gltf.scene.scale.set(0.5, 0.5, 0.5);
+        gltf.scene.position.set(0, 0, 0);
+        markerRoot.add(gltf.scene);
+        console.log('Modelo cargado y agregado a escena');
+    }, undefined, function(error){
+        console.error('Error cargando modelo GLB:', error);
+    });
+
+    // Función principal de animación
+    function animate(){
+        requestAnimationFrame(animate);
+        if (arToolkitSource.ready){
+            arToolkitContext.update(arToolkitSource.domElement);
+        }
+        renderer.render(scene, camera);
+    }
+
+    animate();
+});
+"""
+        # Crear el archivo en el directorio del generador
+        src_path = os.path.join(GEN_DIR, "frontend-ar.js")
+        with open(src_path, "w", encoding="utf-8") as f:
+            f.write(frontend_ar_code)
+        
+        # Copiarlo al directorio www/js del proyecto
+        destino_js_dir = os.path.join(WWW_DIR, "js")
+        os.makedirs(destino_js_dir, exist_ok=True)
+        shutil.copy2(src_path, destino_js_dir)
+        safe_log(logbox, f"✓ frontend-ar.js creado y copiado a {destino_js_dir}")
 
     def generar_iconos(self):
         """
@@ -2222,7 +2277,7 @@ bpy.ops.export_scene.gltf(filepath=r'{destino}', export_format='GLB', export_app
             backend_host = re.search(r'https?://([^:/]+)', backend_url_gui).group(1) if re.search(r'https?://([^:/]+)', backend_url_gui) else None
             crear_archivos_adicionales_android(self.logbox, backend_host)
             self.generar_iconos()
-            self.integrar_frontend_ar(self.logbox) # Inyectar el script de AR
+            self.crear_y_copiar_frontend_ar(self.logbox) # Crear e inyectar el script de AR
             
         except Exception as e:
             self.set_progress("Error durante la configuración de Android.", "red")
@@ -2352,6 +2407,8 @@ if __name__ == "__main__":
     root = Tk()
     app = GeneradorGUI(root)
     root.mainloop()
+
+
 
 
 
