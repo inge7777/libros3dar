@@ -1,0 +1,322 @@
+import tkinter as tk
+from tkinter import ttk
+import os
+import subprocess
+
+# =========================
+# 1. Revisar estructura y programas
+# =========================
+def revisar_programas_estructura():
+    comando = [
+        "powershell.exe",
+        "-ExecutionPolicy", "Bypass",
+        "-File", "F:/linux/3d-AR/scripts/revisar_programas_estructura.ps1"
+    ]
+    resultado = subprocess.run(comando, capture_output=True, text=True)
+    return resultado.stdout
+
+def mostrar_resultado_revision():
+    resultado = revisar_programas_estructura()
+    ventana_resultado = tk.Toplevel()
+    ventana_resultado.title("Estado de programas detectados")
+    ventana_resultado.geometry("700x500")
+    texto = tk.Text(ventana_resultado, wrap="word")
+    texto.insert("1.0", resultado)
+    texto.pack(expand=True, fill="both")
+
+# =========================
+# 2. Selector de programa activo
+# =========================
+def selector_programa_activo():
+    base = "F:/linux/3d-AR/"
+    paquetes_dir = os.path.join(base, "paquetes")
+    programas = [d for d in os.listdir(paquetes_dir) if os.path.isdir(os.path.join(paquetes_dir, d))]
+
+    def validar_programa(nombre):
+        rutas = {
+            "APK": os.path.join(base, "output-apk", f"{nombre}.apk"),
+            "Modelos": os.path.join(base, "models"),
+            "Instrucciones": os.path.join(base, "hunyuan3d"),
+            "Marcadores": os.path.join(base, "nft-creator")
+        }
+        estado = {}
+        estado["APK"] = os.path.exists(rutas["APK"])
+        estado["Modelos"] = any(f.startswith(nombre) and f.endswith(".glb") for f in os.listdir(rutas["Modelos"]))
+        estado["Instrucciones"] = any(f.startswith(nombre) and f.endswith(".json") for f in os.listdir(rutas["Instrucciones"]))
+        estado["Marcadores"] = any(f.startswith(nombre) and f.endswith(".patt") for f in os.listdir(rutas["Marcadores"]))
+        return estado
+
+    def activar_programa(nombre):
+        contexto_path = os.path.join(base, "contexto")
+        os.makedirs(contexto_path, exist_ok=True)
+        with open(os.path.join(contexto_path, "programa_activo.txt"), "w", encoding="utf-8") as f:
+            f.write(nombre)
+
+    def verificar_completo(nombre):
+        estado = validar_programa(nombre)
+        return all(estado.values())
+
+    def cargar_programa():
+        seleccionado = combo.get()
+        estado = validar_programa(seleccionado)
+        activar_programa(seleccionado)
+        completo = verificar_completo(seleccionado)
+        resultado = f"Programa activo: {seleccionado}\n\n"
+        for k, v in estado.items():
+            resultado += f"{k}: {'✅' if v else '❌ Faltante'}\n"
+        resultado += "\nEstado general: " + ("✅ Listo para exportar" if completo else "❌ Incompleto")
+        resultado_text.delete("1.0", tk.END)
+        resultado_text.insert(tk.END, resultado)
+
+    ventana = tk.Toplevel()
+    ventana.title("Selector de Programa Activo")
+    ventana.geometry("500x400")
+
+    tk.Label(ventana, text="Selecciona un programa:", font=("Arial", 11)).pack(pady=10)
+    combo = ttk.Combobox(ventana, values=programas, state="readonly", width=40)
+    combo.pack(pady=5)
+    combo.current(0)
+
+    tk.Button(ventana, text="Cargar programa", command=cargar_programa).pack(pady=10)
+
+    resultado_text = tk.Text(ventana, wrap="word", height=10)
+    resultado_text.pack(expand=True, fill="both", padx=10, pady=10)
+
+# =========================
+# 3. GUI principal con scroll
+# =========================
+def generador_gui_base():
+    ventana = tk.Tk()
+    ventana.title("Generador AR/3D Modular")
+    ventana.geometry("800x900")
+
+    contenedor = tk.Frame(ventana)
+    canvas = tk.Canvas(contenedor)
+    scrollbar = ttk.Scrollbar(contenedor, orient="vertical", command=canvas.yview)
+    scroll_frame = tk.Frame(canvas)
+
+    scroll_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+    canvas.create_window((0, 0), window=scroll_frame, anchor="nw")
+    canvas.configure(yscrollcommand=scrollbar.set)
+
+    contenedor.pack(fill="both", expand=True)
+    canvas.pack(side="left", fill="both", expand=True)
+    scrollbar.pack(side="right", fill="y")
+
+    def boton(titulo, accion):
+        tk.Button(scroll_frame, text=titulo, command=accion, width=50).pack(pady=4)
+
+    # Secciones
+    tk.Label(scroll_frame, text="🧩 1. Revisión de estructura", font=("Arial", 12, "bold")).pack(pady=6)
+    boton("🔍 Revisar estructura y programas", mostrar_resultado_revision)
+
+    tk.Label(scroll_frame, text="🧩 2. Selección de programa activo", font=("Arial", 12, "bold")).pack(pady=6)
+    boton("📦 Seleccionar programa activo", selector_programa_activo)
+
+    tk.Label(scroll_frame, text="🧩 3. Generación de APK", font=("Arial", 12, "bold")).pack(pady=6)
+    boton("📲 Generar APK (pendiente)", lambda: print("Generar APK"))
+
+    tk.Label(scroll_frame, text="🧩 4. Generación de modelos", font=("Arial", 12, "bold")).pack(pady=6)
+    boton("🧠 Generar modelos IA (pendiente)", lambda: print("Generar modelos"))
+
+    tk.Label(scroll_frame, text="🧩 5. Generación de marcadores NFT", font=("Arial", 12, "bold")).pack(pady=6)
+    boton("🎯 Generar marcadores NFT (pendiente)", lambda: print("Generar marcadores"))
+
+    tk.Label(scroll_frame, text="🧩 6. Activación de claves", font=("Arial", 12, "bold")).pack(pady=6)
+    boton("🔑 Activar claves APK (pendiente)", lambda: print("Activar claves"))
+
+    tk.Label(scroll_frame, text="🧩 7. Validación de entorno", font=("Arial", 12, "bold")).pack(pady=6)
+    boton("🧪 Verificar entorno y dependencias (pendiente)", lambda: print("Verificar entorno"))
+
+    ventana.mainloop()
+
+# =========================
+# Ejecutar GUI
+# =========================
+generador_gui_base()
+
+def generador_gui_base():
+    ventana = tk.Tk()
+    ventana.title("Generador AR/3D Modular")
+    ventana.geometry("800x900")
+
+    # Validación automática de entorno
+    verificar_entorno()
+
+    contenedor = tk.Frame(ventana)
+    canvas = tk.Canvas(contenedor)
+    scrollbar = ttk.Scrollbar(contenedor, orient="vertical", command=canvas.yview)
+    scroll_frame = tk.Frame(canvas)
+
+    scroll_frame.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+    canvas.create_window((0, 0), window=scroll_frame, anchor="nw")
+    canvas.configure(yscrollcommand=scrollbar.set)
+
+    contenedor.pack(fill="both", expand=True)
+    canvas.pack(side="left", fill="both", expand=True)
+    scrollbar.pack(side="right", fill="y")
+
+    def boton(titulo, accion):
+        tk.Button(scroll_frame, text=titulo, command=accion, width=50).pack(pady=4)
+
+    # Secciones
+    tk.Label(scroll_frame, text="🧩 1. Revisión de estructura", font=("Arial", 12, "bold")).pack(pady=6)
+    boton("🔍 Revisar estructura y programas", mostrar_resultado_revision)
+
+    tk.Label(scroll_frame, text="🧩 2. Selección de programa activo", font=("Arial", 12, "bold")).pack(pady=6)
+    boton("📦 Seleccionar programa activo", selector_programa_activo)
+
+    tk.Label(scroll_frame, text="🧩 3. Generación de APK", font=("Arial", 12, "bold")).pack(pady=6)
+    boton("📲 Generar APK", generar_apk)
+
+    tk.Label(scroll_frame, text="🧩 4. Generación de modelos", font=("Arial", 12, "bold")).pack(pady=6)
+    boton("🧠 Generar modelos IA", generar_modelos)
+
+    tk.Label(scroll_frame, text="🧩 6. Activación de claves", font=("Arial", 12, "bold")).pack(pady=6)
+    boton("🔑 Activar claves APK", activar_claves_apk)
+
+    ventana.mainloop()
+
+
+def generar_apk():
+    contexto = "F:/linux/3d-AR/contexto/programa_activo.txt"
+    if not os.path.exists(contexto):
+        print("❌ No hay programa activo.")
+        return
+
+    with open(contexto, "r", encoding="utf-8") as f:
+        nombre = f.read().strip()
+
+    comando = [
+        "powershell.exe",
+        "-ExecutionPolicy", "Bypass",
+        "-File", f"F:/linux/3d-AR/scripts/generar_apk.ps1",
+        "-Programa", nombre
+    ]
+    resultado = subprocess.run(comando, capture_output=True, text=True)
+    mostrar_log("Generación de APK", resultado.stdout)
+
+
+def generar_modelos():
+    contexto = "F:/linux/3d-AR/contexto/programa_activo.txt"
+    if not os.path.exists(contexto):
+        print("❌ No hay programa activo.")
+        return
+
+    with open(contexto, "r", encoding="utf-8") as f:
+        nombre = f.read().strip()
+
+    comando = [
+        "powershell.exe",
+        "-ExecutionPolicy", "Bypass",
+        "-File", f"F:/linux/3d-AR/scripts/generar_modelos.ps1",
+        "-Programa", nombre
+    ]
+    resultado = subprocess.run(comando, capture_output=True, text=True)
+    mostrar_log("Generación de modelos IA", resultado.stdout)
+def generar_marcadores():
+    contexto = "F:/linux/3d-AR/contexto/programa_activo.txt"
+    if not os.path.exists(contexto):
+        print("❌ No hay programa activo.")
+        return
+
+    with open(contexto, "r", encoding="utf-8") as f:
+        nombre = f.read().strip()
+
+    comando = [
+        "powershell.exe",
+        "-ExecutionPolicy", "Bypass",
+        "-File", f"F:/linux/3d-AR/scripts/generar_marcadores.ps1",
+        "-Programa", nombre
+    ]
+    resultado = subprocess.run(comando, capture_output=True, text=True)
+    mostrar_log("Generación de marcadores NFT", resultado.stdout)
+
+
+def activar_claves_apk():
+    comando = [
+        "powershell.exe",
+        "-ExecutionPolicy", "Bypass",
+        "-File", "F:/linux/3d-AR/scripts/activar_claves.ps1"
+    ]
+    resultado = subprocess.run(comando, capture_output=True, text=True)
+    mostrar_log("Activación de claves APK", resultado.stdout)
+
+def verificar_entorno():
+    comando = [
+        "powershell.exe",
+        "-ExecutionPolicy", "Bypass",
+        "-File", "F:/linux/3d-AR/scripts/verificar_entorno.ps1"
+    ]
+    resultado = subprocess.run(comando, capture_output=True, text=True)
+    mostrar_log("Verificación de entorno", resultado.stdout)
+def mostrar_log(titulo, contenido):
+    ventana = tk.Toplevel()
+    ventana.title(titulo)
+    ventana.geometry("700x500")
+    texto = tk.Text(ventana, wrap="word")
+    texto.insert("1.0", contenido)
+    texto.pack(expand=True, fill="both")
+
+
+boton("📲 Generar APK", generar_apk)
+boton("🧠 Generar modelos IA", generar_modelos)
+boton("🎯 Generar marcadores NFT", generar_marcadores)
+boton("🔑 Activar claves APK", activar_claves_apk)
+boton("🧪 Verificar entorno y dependencias", verificar_entorno)
+
+param([string]$Programa)
+$log = "F:/linux/3d-AR/diagnostics/apk_$Programa.log"
+"Generando APK para $Programa..." | Out-File $log
+# Aquí va tu lógica de empaquetado
+"✅ APK generado correctamente." | Add-Content $log
+Get-Content $log
+
+param([string]$Programa)
+$log = "F:/linux/3d-AR/diagnostics/modelos_$Programa.log"
+"Generando modelos IA para $Programa..." | Out-File $log
+# Aquí va tu lógica con TripoSR / Hunyuan3D
+"✅ Modelos generados." | Add-Content $log
+Get-Content $log
+
+param([string]$Programa)
+$log = "F:/linux/3d-AR/diagnostics/marcadores_$Programa.log"
+"Generando marcadores NFT para $Programa..." | Out-File $log
+# Aquí va tu lógica de generación de .patt
+"✅ Marcadores generados." | Add-Content $log
+Get-Content $log
+
+$log = "F:/linux/3d-AR/diagnostics/claves_activadas.log"
+"Activando claves APK..." | Out-File $log
+# Aquí va tu lógica de activación
+"✅ Claves activadas." | Add-Content $log
+Get-Content $log
+
+$log = "F:/linux/3d-AR/diagnostics/entorno_verificado.log"
+"Verificando entorno y dependencias..." | Out-File $log
+# Aquí va tu lógica de validación
+"✅ Entorno verificado." | Add-Content $log
+Get-Content $log
+
+def generar_apk():
+    contexto = "F:/linux/3d-AR/contexto/programa_activo.txt"
+    if not os.path.exists(contexto):
+        print("❌ No hay programa activo.")
+        return
+
+    with open(contexto, "r", encoding="utf-8") as f:
+        nombre = f.read().strip()
+
+    # Generar marcadores automáticamente
+    generar_marcadores()
+
+    comando = [
+        "powershell.exe",
+        "-ExecutionPolicy", "Bypass",
+        "-File", f"F:/linux/3d-AR/scripts/generar_apk.ps1",
+        "-Programa", nombre
+    ]
+    resultado = subprocess.run(comando, capture_output=True, text=True)
+    mostrar_log("Generación de APK", resultado.stdout)
+
+
