@@ -1768,6 +1768,10 @@ def ejecutar_phi2(input_path, output_name):
     except Exception as e:
         messagebox.showerror("Error Phi-2", str(e))
 
+if __name__ == "__main__":
+    root = Tk()
+    app = GeneradorGUI(root)
+    root.mainloop()
 
 
 
