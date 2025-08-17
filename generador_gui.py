@@ -35,86 +35,29 @@ except ImportError:
     import psutil
 
 # =========================
-# CONFIGURACIÓN DE ENTORNO Y RUTAS (COMPLETA)
+# CONFIGURACIÓN DE ENTORNO CENTRALIZADA
 # =========================
-BASE_DIR = r"F:\\linux\\3d-AR"
-BLENDER_EXE = BASE_DIR + "\\blender\\blender-4.5.1-windows-x64\\blender.exe"
-TRIPOSR_DIR = BASE_DIR + "\\TripoSR"
-HUNYUAN3D_DIR = BASE_DIR + "\\hunyuan3d"
-NFT_CREATOR = BASE_DIR + "\\nft-creator\\app.js"
-CAPACITOR_TEMPLATE = BASE_DIR + "\\capacitor-template"
-CAPACITOR_PROJECT = BASE_DIR + "\\capacitor"
-ANDROID_DIR = CAPACITOR_PROJECT + "\\android"
-WWW_DIR = CAPACITOR_PROJECT + "\\www"
-PAQUETES_DIR = BASE_DIR + "\\paquetes"
-OUTPUT_APK_DIR = BASE_DIR + "\\output-apk"
-LOGS_DIR = OUTPUT_APK_DIR + "\\logs"
-GEN_DIR = BASE_DIR + "\\generador"
-BACKEND_DB = BASE_DIR + "\\backend\\activaciones.db"
-GRADLE_HOME = BASE_DIR + "\\gradle_cache"
-JAVA_TMP = BASE_DIR + "\\temp_java"
-TRIPOSR_WEIGHTS = TRIPOSR_DIR + "\\model.ckpt"
-TRIPOSR_CONFIG = TRIPOSR_DIR + "\\config.yaml"
-TRIPOSR_SCRIPT = TRIPOSR_DIR + "\\main.py"
-HUNYUAN3D_WEIGHTS = HUNYUAN3D_DIR + "\\model.fp16.ckpt"
-HUNYUAN3D_CONFIG = HUNYUAN3D_DIR + "\\config.yaml"
-HUNYUAN3D_SCRIPT = HUNYUAN3D_DIR + "\\hunyuan3d.py"
-OUTPUT_3DMODELS_DIR = BASE_DIR + "\\output-3dmodels"
-MODELS_SHARED_DIR = BASE_DIR + "\\models"
+import os
+from core.env import get_paths, validate_env
+from core.capacitor import ensure_capacitor_app
+from core.ar_frontend import write_frontend
+from core.apk_build import build_debug_apk
+from core.utils import limpiar_nombre
+from core.log import safe_log, mostrar_log
+from core.imaging3d.single_image import generate_single_image_model
+from core.imaging3d.multiview import generate_multiview_model
+
+# Cargar todas las rutas como variables globales para que el resto del script funcione sin cambios
+globals().update(get_paths())
+
+# Crear directorios de salida que antes se creaban bajo las constantes
 os.makedirs(OUTPUT_3DMODELS_DIR, exist_ok=True)
 os.makedirs(MODELS_SHARED_DIR, exist_ok=True)
-NODE_GLOBAL = BASE_DIR + "\\node_global"
-NODE_CACHE = BASE_DIR + "\\node_cache"
-ANDROID_BUILDS = BASE_DIR + "\\android_builds"
-TEMP_DIR = BASE_DIR + "\\temp"
-TMP_DIR = BASE_DIR + "\\temp"
-ANDROID_MANIFEST = ANDROID_DIR + "\\app\\src\\main\\AndroidManifest.xml"
-STRINGS_XML = ANDROID_DIR + "\\app\\src\\main\\res\\values\\strings.xml"
 
-# ---------------- RUTAS BASE ----------------
-# Directorio base donde se encuentran todos los proyectos y salidas
-# BASE_DIR = r"F:\linux\3d-AR"
-# Plantilla de proyecto Capacitor
-# CAPACITOR_TEMPLATE = os.path.join(BASE_DIR, "capacitor-template")
-# Directorio de trabajo del proyecto Capacitor (donde se copiará la plantilla y se modificará)
-# PROJECT_DIR = os.path.join(BASE_DIR, "capacitor")
-# Directorio de Android dentro del proyecto Capacitor
-# ANDROID_DIR = os.path.join(PROJECT_DIR, "android")
-
-# Directorios para paquetes y APKs de salida
-# PAQUETES_DIR = os.path.join(BASE_DIR, "paquetes")
-# OUTPUT_APK_DIR = os.path.join(BASE_DIR, "output-apk")
-# Directorio para scripts y archivos generados por la GUI
-# GEN_DIR = os.path.join(BASE_DIR, "generador")
-# Rutas a ejecutables externos
-# BLENDER_PATH = r"F:\linux\blender\blender-4.5.1-windows-x64\blender.exe"
-# NFT_CREATOR_PATH = os.path.join(BASE_DIR, "nft-creator")
-
-# Rutas a archivos clave dentro del proyecto Android
-# ICONO_BASE_DIR = os.path.join(ANDROID_DIR, "app", "src", "main", "res")
-# ANDROID_MANIFEST = os.path.join(ANDROID_DIR, "app", "src", "main", "AndroidManifest.xml")
-# WWW_DIR = os.path.join(PROJECT_DIR, "www") # Directorio web del proyecto Capacitor
-# LOGS_DIR = os.path.join(OUTPUT_APK_DIR, "logs")
-# STRINGS_XML = os.path.join(ANDROID_DIR, "app", "src", "main", "res", "values", "strings.xml")
-# Base de datos para las claves de activación del backend
-# BACKEND_DB = os.path.join(BASE_DIR, "backend", "activaciones.db")
-# Script de PowerShell para la compilación del APK (se mantiene para referencia, aunque ahora se usa Gradle directo)
-# PS_SCRIPT = os.path.join(GEN_DIR, "generador_apk.ps1")
-
-import unicodedata # Importar unicodedata para limpiar_nombre
 
 # -------------- FUNCIONES AUXILIARES --------------
 
-def limpiar_nombre(nombre: str) -> str:
-    """
-    Normaliza un nombre para que sea compatible con nombres de archivos/carpetas
-    y paquetes Java/Android, eliminando caracteres problemáticos y convirtiendo a minúsculas.
-    """
-    s = unicodedata.normalize('NFKD', nombre).encode('ascii', 'ignore').decode()
-    # Elimina cualquier carácter que no sea alfanumérico o guion bajo
-    s = re.sub(r'[^a-zA-Z0-9_]', '', s)
-    # Retorna en minúsculas y limitado en longitud
-    return s.lower()[:50]
+# La función limpiar_nombre ha sido movida a core/utils.py
 
 def get_package_name(nombre_limpio: str) -> str:
     """Genera el nombre del paquete de Android."""
@@ -282,17 +225,7 @@ def set_gradle_namespace(logbox, package_name):
     safe_log(logbox, f"✓ build.gradle actualizado con namespace: {package_name}")
     return True
 
-def safe_log(logbox, msg: str):
-    """
-    Escribe mensajes en el cuadro de log de la GUI con un timestamp,
-    asegurando que el widget esté en un estado editable y visible.
-    """
-    if logbox and logbox.winfo_exists():
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        logbox.config(state=NORMAL) # Habilitar edición
-        logbox.insert(END, f"[{timestamp}] {msg}\n")
-        logbox.see(END) # Desplazarse al final
-        logbox.config(state=DISABLED) # Deshabilitar edición, solo lectura
+# La función safe_log ha sido movida a core/log.py
 
 def limpiar_carpetas(logbox, nombre: str):
     """
@@ -329,72 +262,7 @@ def validar_y_crear_carpetas(logbox):
         os.makedirs(c, exist_ok=True)
     safe_log(logbox, "✓ Carpetas base verificadas.")
 
-def verificar_entorno(logbox) -> bool:
-    """
-    Verifica la existencia y funcionalidad de herramientas externas como Java, Blender, npx,
-    y la accesibilidad de la base de datos SQLite y la plantilla de Capacitor.
-    """
-    ok = True
-    try:
-        result = subprocess.run(["java", "-version"], capture_output=True, text=True, check=True, encoding="utf-8", shell=True)
-        safe_log(logbox, f"✓ Java detectado: {result.stderr.splitlines()[0]}")
-    except Exception as e:
-        safe_log(logbox, f"✗ ERROR: Java no está instalado o no accesible: {e}")
-        ok = False
-    if not os.path.exists(BLENDER_PATH):
-        safe_log(logbox, f"✗ ERROR: Blender no encontrado en {BLENDER_PATH}")
-        ok = False
-    else:
-        safe_log(logbox, "✓ Blender encontrado.")
-    
-    if not shutil.which("npx"):
-        safe_log(logbox, "✗ ERROR: 'npx' no encontrado en el PATH del sistema. (¿Node.js instalado?)")
-        ok = False
-    else:
-        try:
-            result = subprocess.run(["npx", "--version"], check=True, capture_output=True, text=True, shell=True)
-            safe_log(logbox, f"✓ npx detectado y ejecutable: {result.stdout.strip()}")
-        except Exception as e:
-            safe_log(logbox, f"✗ ERROR: npx no ejecuta correctamente: {e}")
-            ok = False
-
-    if not shutil.which("npm"):
-        safe_log(logbox, "✗ ERROR: 'npm' no encontrado en el PATH del sistema. (¿Node.js instalado?)")
-        ok = False
-    else:
-        try:
-            result = subprocess.run(["npm", "--version"], check=True, capture_output=True, text=True, shell=True)
-            safe_log(logbox, f"✓ npm detectado y ejecutable: {result.stdout.strip()}")
-        except Exception as e:
-            safe_log(logbox, f"✗ ERROR: npm no ejecuta correctamente: {e}")
-            ok = False
-    try:
-        conn = sqlite3.connect(BACKEND_DB)
-        cursor = conn.cursor()
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS activaciones (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                token TEXT NOT NULL UNIQUE,
-                device_id TEXT,
-                fecha_creacion TEXT NOT NULL,
-                usado INTEGER DEFAULT 0,
-                fecha_uso TEXT
-            )
-        """)
-        conn.commit()
-        conn.close()
-        safe_log(logbox, f"✓ Base de datos SQLite accesible y tabla 'activaciones' verificada en: {BACKEND_DB}")
-    except Exception as e:
-        safe_log(logbox, f"✗ ERROR: No se pudo conectar o verificar la base dea bd Sqlite: {e}")
-        ok = False
-    # La verificación de capacitor.config.json se hará sobre la plantilla
-    config_path = os.path.join(CAPACITOR_TEMPLATE, "capacitor.config.json")
-    if not os.path.exists(config_path):
-        safe_log(logbox, f"✗ ERROR: No se encontró capacitor.config.json en {config_path}")
-        ok = False
-    else:
-        safe_log(logbox, "✓ capacitor.config.json encontrado.")
-    return ok
+# La función verificar_entorno ha sido refactorizada y movida a core/env.py como validate_env
 
 def insertar_claves_en_backend(logbox, claves: list):
     """
@@ -1356,7 +1224,7 @@ class GeneradorGUI:
         self._init_layout() # Inicializar la interfaz de usuario
         validar_y_crear_carpetas(self.logbox) # Crea carpetas base que no dependen de la estructura de Capacitor
         # Verificar el entorno al inicio
-        if not verificar_entorno(self.logbox):
+        if not validate_env(lambda msg: safe_log(self.logbox, msg)):
             messagebox.showerror("Error de entorno", "Faltan herramientas necesarias. Revisa el log.")
 
     def subir_portada(self):
@@ -1364,6 +1232,142 @@ class GeneradorGUI:
         if file_path:
             self.portada_path.set(file_path)
             self._portada_path_full = file_path
+
+    def generar_iconos_desde_portada(self):
+        if not self._portada_path_full:
+            messagebox.showerror("Error", "No se ha seleccionado una portada.")
+            return
+
+        tamaños = {
+            "mipmap-mdpi": 48,
+            "mipmap-hdpi": 72,
+            "mipmap-xhdpi": 96,
+            "mipmap-xxhdpi": 144,
+            "mipmap-xxxhdpi": 192
+        }
+
+        for carpeta, tamaño in tamaños.items():
+            ruta_dir = os.path.join(ICONO_BASE_DIR, carpeta)
+            os.makedirs(ruta_dir, exist_ok=True)
+            ruta = os.path.join(ruta_dir, "ic_launcher.png")
+            try:
+                img = Image.open(self._portada_path_full).convert("RGBA")
+                # Image.ANTIALIAS is deprecated in Pillow 10.0.0, but should work for now.
+                # It was replaced by Image.Resampling.LANCZOS
+                img = ImageOps.fit(img, (tamaño, tamaño), Image.ANTIALIAS)
+                img.save(ruta)
+                safe_log(self.logbox, f"✓ Icono generado: {ruta}")
+            except Exception as e:
+                safe_log(self.logbox, f"✗ Error generando icono {carpeta}: {e}")
+
+    def exportar_log(self):
+        ruta = filedialog.asksaveasfilename(defaultextension=".txt", filetypes=[("Archivo de texto", "*.txt")])
+        if ruta:
+            contenido = self.logbox.get("1.0", END)
+            with open(ruta, "w", encoding="utf-8") as f:
+                f.write(contenido)
+            safe_log(self.logbox, f"✓ Log exportado a: {ruta}")
+
+    def validar_paquete_completo(self):
+        nombre = limpiar_nombre(self.nombre_libro.get())
+        if not nombre:
+            messagebox.showerror("Error", "Nombre del paquete requerido.")
+            return False
+
+        # Corregido: La ruta de marcadores debe apuntar al directorio, no al script app.js
+        # También se buscan marcadores .fset (NFT) además de .patt
+        rutas = {
+            "Portada": os.path.join(PAQUETES_DIR, nombre, "portada.jpg"),
+            "Modelos": os.path.join(MODELS_SHARED_DIR),
+            "Marcadores": os.path.join(WWW_DIR, "assets", "markers"),
+            "HTML": [os.path.join(PAQUETES_DIR, nombre, f) for f in ["index.html", "main-menu.html", "ar-viewer.html"]],
+            "Claves": os.path.join(OUTPUT_APK_DIR, f"{nombre}_claves.txt")
+        }
+
+        estado = {
+            "Portada": os.path.exists(rutas["Portada"]),
+            "Modelos": any(f.startswith(nombre) and f.endswith(".glb") for f in os.listdir(rutas["Modelos"])) if os.path.exists(rutas["Modelos"]) else False,
+            "Marcadores": any(f.startswith(nombre) and (f.endswith(".patt") or f.endswith(".fset")) for f in os.listdir(rutas["Marcadores"])) if os.path.exists(rutas["Marcadores"]) else False,
+            "HTML": all(os.path.exists(f) for f in rutas["HTML"]),
+            "Claves": os.path.exists(rutas["Claves"])
+        }
+
+        if not all(estado.values()):
+            mensaje = f"❌ El paquete '{nombre}' está incompleto:\n"
+            for k, v in estado.items():
+                mensaje += f"{k}: {'✓' if v else '✗'}\n"
+
+            safe_log(self.logbox, mensaje)
+            messagebox.showwarning("Validación antes de APK", mensaje)
+            return False
+
+        safe_log(self.logbox, f"✓ Paquete '{nombre}' validado correctamente.")
+        return True
+
+    def generar_apk(self):
+        if not self.validar_paquete_completo():
+            return
+
+        safe_log(self.logbox, f"--- Iniciando compilación de APK ---")
+        try:
+            # Lógica de compilación delegada a apk_build
+            success = build_debug_apk(CAPACITOR_PROJECT, log=lambda msg: safe_log(self.logbox, msg))
+            if success:
+                messagebox.showinfo("Éxito", "APK compilado exitosamente. Revisa la carpeta de salida.")
+                safe_log(self.logbox, f"--- Compilación de APK finalizada con éxito ---")
+            else:
+                messagebox.showerror("Error de Compilación", "Falló la compilación del APK. Revisa el log para más detalles.")
+                safe_log(self.logbox, f"--- Compilación de APK fallida ---")
+        except Exception as e:
+            safe_log(self.logbox, f"✗ ERROR FATAL compilando APK: {e}")
+            messagebox.showerror("Error", f"Ocurrió un error inesperado durante la compilación: {e}")
+
+    def generar_paquete(self):
+        nombre_app = self.nombre_libro.get()
+        if not nombre_app:
+            messagebox.showerror("Error", "Nombre del paquete requerido.")
+            return
+
+        safe_log(self.logbox, f"--- Iniciando generación de paquete para '{nombre_app}' ---")
+        try:
+            # Lógica delegada a los módulos de core
+            app_id = f"com.librosdar.{limpiar_nombre(nombre_app)}"
+            ensure_capacitor_app(CAPACITOR_TEMPLATE, CAPACITOR_PROJECT, app_id, nombre_app, log=lambda msg: safe_log(self.logbox, msg))
+
+            # Por ahora, pasamos una lista de modelos vacía. Esto se puede conectar a la GUI más adelante.
+            models_info = []
+            propaganda = self.propaganda_var.get().strip()
+            explicacion = self.explicacion_var.get().strip()
+            write_frontend(
+                WWW_DIR,
+                models_info,
+                log=lambda msg: safe_log(self.logbox, msg),
+                propaganda_url=propaganda,
+                explicacion_url=explicacion
+            )
+            safe_log(self.logbox, f"✓ Frontend web AR generado con enlaces dinámicos en: {WWW_DIR}")
+
+            messagebox.showinfo("Éxito", f"Paquete '{nombre_app}' generado y listo para compilación.")
+            safe_log(self.logbox, f"--- Paquete '{nombre_app}' generado exitosamente ---")
+        except Exception as e:
+            safe_log(self.logbox, f"✗ ERROR FATAL generando paquete: {e}")
+            messagebox.showerror("Error", f"No se pudo generar el paquete: {e}")
+
+    def lanzar_single_image(self):
+        img_in = filedialog.askopenfilename(title="Selecciona la imagen de entrada")
+        if not img_in: return
+        model_out = filedialog.asksaveasfilename(defaultextension=".glb", title="Guardar modelo 3D GLB", filetypes=[("GLB file", "*.glb")])
+        if img_in and model_out:
+            threading.Thread(target=lambda: generate_single_image_model(img_in, model_out, log=lambda msg: safe_log(self.logbox, msg)), daemon=True).start()
+            safe_log(self.logbox, "Iniciando pipeline Single-Image en segundo plano...")
+
+    def lanzar_multiview(self):
+        img_dir = filedialog.askdirectory(title="Selecciona la carpeta con las fotos")
+        if not img_dir: return
+        model_out = filedialog.asksaveasfilename(defaultextension=".glb", title="Guardar modelo 3D GLB", filetypes=[("GLB file", "*.glb")])
+        if img_dir and model_out:
+            threading.Thread(target=lambda: generate_multiview_model(img_dir, model_out, log=lambda msg: safe_log(self.logbox, msg)), daemon=True).start()
+            safe_log(self.logbox, "Iniciando pipeline Multi-View en segundo plano...")
 
     def _init_layout(self):
         """Inicializa la disposición de los elementos de la GUI."""
@@ -1412,6 +1416,7 @@ class GeneradorGUI:
                command=self.generar_paquete, width=18, height=2).pack(pady=5)
         Button(acciones_frame, text="Generar APK", bg="#007bff", fg="white",
                command=self.generar_apk, width=18, height=2).pack(pady=5)
+        Button(acciones_frame, text="Generar Íconos", command=self.generar_iconos_desde_portada, width=18).pack(pady=5)
         Button(acciones_frame, text="Iniciar Servidor y Ngrok", bg="#ffc107", fg="black",
                command=self.iniciar_servidor_ngrok, width=18, height=2).pack(pady=5)
         Button(acciones_frame, text="Ver Modelo 3D", command=self.ver_modelo_actual, width=18).pack(pady=5)
@@ -1423,6 +1428,15 @@ class GeneradorGUI:
         Button(acciones_frame, text="Limpiar Formulario", fg="black",
                command=self.limpiar_todo, width=18).pack(pady=20)
 
+        # Nuevo frame para los pipelines 3D
+        gen3d_frame = Frame(main, pady=20)
+        gen3d_frame.pack(side=LEFT, fill=Y, padx=(20, 0))
+        Label(gen3d_frame, text="10. Generación 3D:", font=("Segoe UI", 10, "bold")).pack(anchor="w", pady=(0, 10))
+        Button(gen3d_frame, text="Desde 1 Imagen", bg="#17a2b8", fg="white",
+               command=self.lanzar_single_image, width=18, height=2).pack(pady=5)
+        Button(gen3d_frame, text="Desde Múltiples Vistas", bg="#17a2b8", fg="white",
+               command=self.lanzar_multiview, width=18, height=2).pack(pady=5)
+
         log_frame = Frame(self.root, padx=10, pady=10)
         log_frame.pack(side=RIGHT, fill=BOTH, expand=True)
         Label(log_frame, text="Log de la Aplicación:", font=("Segoe UI", 10, "bold")).pack(anchor='w')
@@ -1432,6 +1446,7 @@ class GeneradorGUI:
         self.logbox.config(yscrollcommand=lambda f, l: ()) # Deshabilita el scroll automático para evitar saltos
 
         Button(log_frame, text="Copiar Log", command=self.copy_log_to_clipboard).pack(pady=5)
+        Button(log_frame, text="Exportar Log", command=self.exportar_log).pack(pady=5)
 
         self.label_progreso = Label(self.root, text="Listo.", relief="sunken", anchor="w", padx=5)
         self.label_progreso.pack(side="bottom", fill="x")
@@ -1604,12 +1619,7 @@ try:
 except ImportError:
     webview = None
 
-# Función para mostrar logs en ventana emergente
-def mostrar_log(titulo, mensaje):
-    win = tk.Toplevel()
-    win.title(titulo)
-    tk.Label(win, text=mensaje, font=("Arial", 11), wraplength=600, justify="left").pack(padx=20, pady=20)
-    tk.Button(win, text="Cerrar", command=win.destroy).pack(pady=10)
+# La función mostrar_log ha sido movida a core/log.py
 
 # Stubs para funciones de pipeline
 def generar_modelos():
@@ -1617,9 +1627,6 @@ def generar_modelos():
 
 def generar_marcadores():
     print("Stub: generar_marcadores ejecutado")
-
-def generar_apk():
-    print("Stub: generar_apk ejecutado")
 
 def activar_claves_apk():
     print("Stub: activar_claves_apk ejecutado")
@@ -1629,6 +1636,16 @@ def selector_programa_activo():
 
 def mostrar_resultado_revision():
     print("Stub: mostrar_resultado_revision ejecutado")
+
+def generar_codigo_bpy(instruccion):
+    # Se usa una ruta relativa para portabilidad, en lugar de depender de BASE_DIR
+    contexto_path = os.path.join("contexto", "context_phi2.json")
+    if os.path.exists(contexto_path):
+        with open(contexto_path, "r", encoding="utf-8") as f:
+            contexto = json.load(f)
+        if instruccion in contexto:
+            return contexto[instruccion]
+    return f"# Código bpy para: {instruccion}\n# TODO: implementar lógica"
 
 # === PANEL DE GENERACIÓN 3D IA EN LA GUI PRINCIPAL ===
 def panel_ia_generacion(root):
@@ -1679,11 +1696,7 @@ def panel_ia_generacion(root):
         if not input_path or not output_name:
             messagebox.showerror("Error", "Debes especificar la ruta de entrada y el nombre de salida.")
             return
-        try:
-            from phi2_interpreter import generar_codigo_bpy
-        except ImportError:
-            messagebox.showerror("Error", "No se encontró phi2_interpreter.py.")
-            return
+
         codigo_bpy = generar_codigo_bpy(instruccion)
         # Guardar el código bpy en un script temporal
         script_path = os.path.join(OUTPUT_3DMODELS_DIR, f"temp_bpy_{output_name}.py")

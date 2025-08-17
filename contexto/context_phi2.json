@@ -1,0 +1,4 @@
+{
+  "rotar el modelo 90 grados": "for obj in bpy.data.objects: obj.rotation_euler[2] += 1.57",
+  "escalar el modelo al doble": "for obj in bpy.data.objects: obj.scale *= 2"
+}
