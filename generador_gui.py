@@ -1,4 +1,4 @@
-## -*- coding: utf-8 -*-
+# -*- coding: utf-8 -*-
 import os
 import shutil
 import sys
@@ -35,7 +35,7 @@ except ImportError:
 
 # ---------------- RUTAS BASE ----------------
 # Directorio base donde se encuentran todos los proyectos y salidas
-BASE_DIR = r"D:\libros3dar2"
+BASE_DIR = r"F:\linux\3d-AR"
 # Plantilla de proyecto Capacitor
 CAPACITOR_TEMPLATE = os.path.join(BASE_DIR, "capacitor-template")
 # Directorio de trabajo del proyecto Capacitor (donde se copiará la plantilla y se modificará)
@@ -49,8 +49,8 @@ OUTPUT_APK_DIR = os.path.join(BASE_DIR, "output-apk")
 # Directorio para scripts y archivos generados por la GUI
 GEN_DIR = os.path.join(BASE_DIR, "generador")
 # Rutas a ejecutables externos
-BLENDER_PATH = r"D:\amazonlibro\blender 3d\blender.exe"
-NFT_CREATOR_PATH = r"D:\libros3dar2\nft crator\NFT-Marker-Creator"
+BLENDER_PATH = r"F:\linux\blender\blender-4.5.1-windows-x64\blender.exe"
+NFT_CREATOR_PATH = os.path.join(BASE_DIR, "nft-creator")
 
 # Rutas a archivos clave dentro del proyecto Android
 ICONO_BASE_DIR = os.path.join(ANDROID_DIR, "app", "src", "main", "res")
@@ -87,107 +87,98 @@ def preparar_rutas_java(package_name):
     os.makedirs(java_dir, exist_ok=True)
     return os.path.join(java_dir, "MainActivity.java")
 
-def crear_main_activity(package_name):
-    ruta = preparar_rutas_java(package_name)
-    codigo = f"""package {package_name};
+def crear_main_activity(logbox, package_name):
+    """
+    Genera un MainActivity.java robusto que maneja permisos de cámara y
+    establece un fondo de WebView transparente para la correcta visualización de la AR.
+    """
+    ruta_main_activity = preparar_rutas_java(package_name)
+    
+    codigo_java = f"""package {package_name};
 
+import android.Manifest;
+import android.content.pm.PackageManager;
+import android.graphics.Color;
 import android.os.Bundle;
+import android.webkit.PermissionRequest;
+import android.webkit.WebChromeClient;
+import android.webkit.WebSettings;
 import android.widget.Toast;
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
 import com.getcapacitor.BridgeActivity;
 
 public class MainActivity extends BridgeActivity {{
+    private static final int CAMERA_PERMISSION_REQUEST_CODE = 100;
 
     @Override
-    public void onResume() {{
-        super.onResume();
-        // Verificar y solicitar permisos de cámara al reanudar la actividad.
-        // Esto es crucial para la funcionalidad de AR.
-        if (!CameraPermissionHelper.hasCameraPermission(this)) {{
-            CameraPermissionHelper.requestCameraPermission(this);
+    public void onCreate(Bundle savedInstanceState) {{
+        super.onCreate(savedInstanceState);
+
+        // **CRÍTICO**: Hacer el fondo del WebView transparente para ver la cámara.
+        bridge.getWebView().setBackgroundColor(Color.TRANSPARENT);
+        
+        // Configuraciones adicionales de WebView para AR
+        WebSettings webSettings = bridge.getWebView().getSettings();
+        webSettings.setJavaScriptEnabled(true);
+        webSettings.setDomStorageEnabled(true);
+        webSettings.setMediaPlaybackRequiresUserGesture(false); // Permitir autoplay de video
+
+        // Solicitar permiso de cámara al iniciar la app.
+        requestCameraPermission();
+    }}
+
+    private void requestCameraPermission() {{
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {{
+            ActivityCompat.requestPermissions(
+                this,
+                new String[]{{Manifest.permission.CAMERA}},
+                CAMERA_PERMISSION_REQUEST_CODE
+            );
+        }} else {{
+            // Si el permiso ya está concedido, configurar el WebView.
+            setupWebView();
         }}
     }}
 
     @Override
-    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] results) {{
-        super.onRequestPermissionsResult(requestCode, permissions, results);
-
-        // Si el permiso de la cámara no fue concedido, mostrar un mensaje y cerrar la app.
-        if (!CameraPermissionHelper.hasCameraPermission(this)) {{
-            Toast.makeText(this, "El permiso de cámara es necesario para usar la Realidad Aumentada.", Toast.LENGTH_LONG).show();
-            finish();
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {{
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == CAMERA_PERMISSION_REQUEST_CODE) {{
+            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {{
+                // Permiso concedido, configurar el WebView.
+                setupWebView();
+            }} else {{
+                // Permiso denegado, es esencial para la app.
+                Toast.makeText(this, "El permiso de cámara es necesario para la Realidad Aumentada.", Toast.LENGTH_LONG).show();
+                finish(); // Cerrar la app si el permiso es denegado.
+            }}
         }}
     }}
-}}
-"""
-    with open(ruta, "w", encoding="utf-8") as f:
-        f.write(codigo)
-    return ruta
 
-def crear_camera_permission_helper(logbox, package_name):
-    """
-    Crea el archivo CameraPermissionHelper.java en el paquete correcto.
-    """
-    helper_code = f"""package {package_name};
-
-import android.Manifest;
-import android.app.Activity;
-import android.content.Intent;
-import android.content.pm.PackageManager;
-import android.net.Uri;
-import android.provider.Settings;
-import androidx.core.app.ActivityCompat;
-import androidx.core.content.ContextCompat;
-
-/**
- * Helper para solicitar el permiso de cámara en tiempo de ejecución.
- */
-public final class CameraPermissionHelper {{
-  private static final int CAMERA_PERMISSION_CODE = 0;
-  private static final String CAMERA_PERMISSION = Manifest.permission.CAMERA;
-
-  /**
-   * Verifica si la app tiene el permiso de cámara.
-   */
-  public static boolean hasCameraPermission(Activity activity) {{
-    return ContextCompat.checkSelfPermission(activity, CAMERA_PERMISSION)
-        == PackageManager.PERMISSION_GRANTED;
-  }}
-
-  /**
-   * Solicita el permiso de cámara si aún no se ha concedido.
-   */
-  public static void requestCameraPermission(Activity activity) {{
-    ActivityCompat.requestPermissions(
-        activity, new String[]{{CAMERA_PERMISSION}}, CAMERA_PERMISSION_CODE);
-  }}
-
-  /**
-   * Verifica si se debe mostrar una justificación para solicitar el permiso.
-   * (No se usa en el flujo actual, pero es buena práctica tenerlo).
-   */
-  public static boolean shouldShowRequestPermissionRationale(Activity activity) {{
-    return ActivityCompat.shouldShowRequestPermissionRationale(activity, CAMERA_PERMISSION);
-  }}
-
-  /**
-   * Lanza la configuración de la aplicación para que el usuario pueda conceder el permiso manualmente.
-   */
-  public static void launchPermissionSettings(Activity activity) {{
-    Intent intent = new Intent();
-    intent.setAction(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
-    intent.setData(Uri.fromParts("package", activity.getPackageName(), null));
-    activity.startActivity(intent);
-  }}
+    private void setupWebView() {{
+        // Este WebChromeClient es útil para otras solicitudes de permisos desde la web.
+        this.bridge.getWebView().setWebChromeClient(new WebChromeClient() {{
+            @Override
+            public void onPermissionRequest(final PermissionRequest request) {{
+                runOnUiThread(() -> {{
+                    if (request.getResources() != null && request.getResources().length > 0) {{
+                        request.grant(request.getResources());
+                    }} else {{
+                        request.deny();
+                    }}
+                }});
+            }}
+        }});
+    }}
 }}
 """
     try:
-        java_dir = os.path.join(ANDROID_DIR, "app", "src", "main", "java", *package_name.split('.'))
-        helper_path = os.path.join(java_dir, "CameraPermissionHelper.java")
-        with open(helper_path, "w", encoding="utf-8") as f:
-            f.write(helper_code)
-        safe_log(logbox, f"✓ CameraPermissionHelper.java creado en: {helper_path}")
+        with open(ruta_main_activity, "w", encoding="utf-8") as f:
+            f.write(codigo_java)
+        safe_log(logbox, f"✓ MainActivity.java (con permisos y fondo transparente) generado en: {ruta_main_activity}")
     except Exception as e:
-        safe_log(logbox, f"✗ ERROR creando CameraPermissionHelper.java: {e}")
+        safe_log(logbox, f"✗ ERROR CRÍTICO generando MainActivity.java: {e}")
         raise
 
 def actualizar_capacitor_config(logbox, package_name, app_name):
@@ -243,6 +234,56 @@ def set_gradle_namespace(logbox, package_name):
 
     safe_log(logbox, f"✓ build.gradle actualizado con namespace: {package_name}")
     return True
+
+def ensure_camera_para_dat(logbox, www_data_dir):
+    """
+    Asegura que el archivo camera_para.dat exista en el directorio www/data.
+    Implementa una estrategia de tres niveles:
+    1. Copia desde una carpeta local.
+    2. Descarga desde una URL primaria.
+    3. Descarga desde una URL de respaldo.
+    """
+    camera_para_dest_path = os.path.join(www_data_dir, "camera_para.dat")
+    if os.path.exists(camera_para_dest_path):
+        safe_log(logbox, "✓ `camera_para.dat` ya existe en el directorio de destino.")
+        return True
+
+    # --- Estrategia 1: Copiar desde la carpeta local ---
+    local_source_path = r"F:\linux\3d-AR\camara\camera_para.dat"
+    if os.path.exists(local_source_path):
+        try:
+            shutil.copy2(local_source_path, camera_para_dest_path)
+            safe_log(logbox, f"✓ `camera_para.dat` copiado exitosamente desde la fuente local: {local_source_path}")
+            return True
+        except Exception as e:
+            safe_log(logbox, f"ADVERTENCIA: Falló la copia local de `camera_para.dat`, aunque el archivo existe. Error: {e}")
+    else:
+        safe_log(logbox, "INFO: No se encontró `camera_para.dat` en la ruta local. Procediendo a descargar.")
+
+    # --- Estrategia 2 & 3: Descargar desde URLs ---
+    urls = [
+        "https://jeromeetienne.github.io/AR.js/data/data/camera_para.dat",  # URL Primaria (correcta)
+        "https://raw.githubusercontent.com/AR-js-org/AR.js/master/data/camera_para.dat" # URL de Respaldo
+    ]
+
+    for i, url in enumerate(urls):
+        safe_log(logbox, f"Intentando descargar `camera_para.dat` desde: {url} (Intento {i+1}/{len(urls)})...")
+        try:
+            response = requests.get(url, timeout=15)
+            response.raise_for_status()
+            with open(camera_para_dest_path, "wb") as f:
+                f.write(response.content)
+            safe_log(logbox, f"✓ `camera_para.dat` descargado y guardado exitosamente desde la URL {i+1}.")
+            return True
+        except requests.exceptions.RequestException as e:
+            safe_log(logbox, f"✗ Falló la descarga desde la URL {i+1}: {e}")
+            if i < len(urls) - 1:
+                safe_log(logbox, "Probando con la siguiente URL de respaldo...")
+
+    # --- Si todo falla ---
+    safe_log(logbox, "✗ ERROR CRÍTICO: Fallaron todos los métodos para obtener `camera_para.dat` (copia local y descarga).")
+    messagebox.showerror("Error Crítico", "No se pudo obtener `camera_para.dat` desde la fuente local ni desde internet. La funcionalidad AR no funcionará. Verifica tu conexión y la disponibilidad del archivo.")
+    return False
 
 def safe_log(logbox, msg: str):
     """
@@ -677,41 +718,6 @@ def verificar_nft_marker_creator(logbox):
         safe_log(logbox, f"✗ Error verificando NFT-Marker-Creator: {e}")
         return False
 
-def generar_marcador_nft(logbox, imagen_path, nombre_marcador):
-    if not verificar_nft_marker_creator(logbox):
-        return False
-    
-    try:
-        # El script principal es app.js y se debe ejecutar con node
-        script_path = os.path.join(NFT_CREATOR_PATH, "app.js")
-        imagen_absoluta = os.path.abspath(imagen_path)
-        
-        # Comando corregido para usar 'node app.js -i <path>'
-        cmd = ["node", "app.js", "-i", imagen_absoluta]
-        
-        safe_log(logbox, f"Ejecutando desde '{NFT_CREATOR_PATH}': {' '.join(cmd)}")
-        result = subprocess.run(cmd, cwd=NFT_CREATOR_PATH, capture_output=True, text=True, shell=True, timeout=180)
-        
-        if result.returncode == 0 and "error" not in result.stderr.lower():
-            output_dir = os.path.join(WWW_DIR, "assets", "markers")
-            os.makedirs(output_dir, exist_ok=True)
-            archivos_movidos = 0
-            base_name = os.path.splitext(os.path.basename(imagen_path))[0]
-            for ext in ['.fset', '.fset3', '.iset']:
-                src_file = os.path.join(NFT_CREATOR_PATH, base_name + ext)
-                if os.path.exists(src_file):
-                    dst_file = os.path.join(output_dir, f"{nombre_marcador}{ext}")
-                    shutil.move(src_file, dst_file)
-                    safe_log(logbox, f"✓ Archivo NFT movido: {dst_file}")
-                    archivos_movidos += 1
-            return archivos_movidos > 0
-        else:
-            safe_log(logbox, f"✗ Error en NFT-Marker-Creator: {result.stderr or result.stdout}")
-            return False
-    except Exception as e:
-        safe_log(logbox, f"✗ Error crítico generando marcador NFT: {e}")
-        return False
-
 def generar_patt_opencv(logbox, imagen_path, patron_path):
     try:
         img = cv2.imread(imagen_path, cv2.IMREAD_GRAYSCALE)
@@ -738,7 +744,7 @@ def diagnosticar_espacio_disco(logbox):
         safe_log(logbox, "=== DIAGNÓSTICO DE ESPACIO EN DISCO ===")
         
         # Verificar discos principales
-        for letra in ['C:', 'D:']:
+        for letra in ['C:', 'F:']:
             try:
                 disk = psutil.disk_usage(letra)
                 total_gb = disk.total / (1024**3)
@@ -807,20 +813,20 @@ def verificar_espacio_disco(logbox):
         disk_c = psutil.disk_usage('C:')
         free_gb_c = disk_c.free / (1024**3)
         
-        # Verificar disco D: (proyecto)
-        disk_d = psutil.disk_usage('D:')
-        free_gb_d = disk_d.free / (1024**3)
+        # Verificar disco F: (proyecto)
+        disk_f = psutil.disk_usage('F:')
+        free_gb_f = disk_f.free / (1024**3)
         
         safe_log(logbox, f"Espacio libre en C: {free_gb_c:.1f} GB")
-        safe_log(logbox, f"Espacio libre en D: {free_gb_d:.1f} GB")
+        safe_log(logbox, f"Espacio libre en F: {free_gb_f:.1f} GB")
         
         # Se necesitan al menos 8GB libres para build de Android
         if free_gb_c < 4:
             safe_log(logbox, f"⚠ ADVERTENCIA: Poco espacio en C: ({free_gb_c:.1f} GB). Se necesitan al menos 4GB")
             return False
             
-        if free_gb_d < 4:
-            safe_log(logbox, f"⚠ ADVERTENCIA: Poco espacio en D: ({free_gb_d:.1f} GB). Se necesitan al menos 4GB")
+        if free_gb_f < 4:
+            safe_log(logbox, f"⚠ ADVERTENCIA: Poco espacio en F: ({free_gb_f:.1f} GB). Se necesitan al menos 4GB")
             return False
             
         safe_log(logbox, "✓ Espacio en disco suficiente para build")
@@ -833,9 +839,9 @@ def verificar_espacio_disco(logbox):
         safe_log(logbox, f"⚠ Error verificando espacio en disco: {e}")
         return True
 
-def configurar_gradle_en_disco_d(logbox, nombre_paquete_limpio):
+def configurar_gradle_en_disco_f(logbox, nombre_paquete_limpio):
     """
-    Configura Gradle para usar el disco D cuando el disco C tiene poco espacio libre.
+    Configura Gradle para usar el disco F cuando el disco C tiene poco espacio libre.
     Esta función modifica las configuraciones de Gradle para optimizar el uso de espacio en disco.
     
     Args:
@@ -846,10 +852,10 @@ def configurar_gradle_en_disco_d(logbox, nombre_paquete_limpio):
         bool: True si la configuración fue exitosa, False en caso contrario
     """
     try:
-        safe_log(logbox, "Configurando Gradle para usar disco D...")
+        safe_log(logbox, "Configurando Gradle para usar disco F...")
         
-        # 1. Configurar GRADLE_USER_HOME para usar disco D
-        gradle_user_home = r"D:\gradle_cache"
+        # 1. Configurar GRADLE_USER_HOME para usar disco F
+        gradle_user_home = os.path.join(BASE_DIR, "gradle_cache")
         os.makedirs(gradle_user_home, exist_ok=True)
         
         # Establecer variable de entorno para la sesión actual
@@ -858,7 +864,7 @@ def configurar_gradle_en_disco_d(logbox, nombre_paquete_limpio):
         
         # 2. Crear archivo gradle.properties en el directorio de trabajo del proyecto
         gradle_properties_path = os.path.join(PROJECT_DIR, "gradle.properties")
-        gradle_properties_content = f"""# Configuración optimizada para disco D
+        gradle_properties_content = f"""# Configuración optimizada para disco F
 org.gradle.daemon=true
 org.gradle.parallel=true
 org.gradle.caching=true
@@ -867,8 +873,8 @@ org.gradle.configureondemand=true
 # Configuración de memoria optimizada
 org.gradle.jvmargs=-Xmx4096m -XX:MaxPermSize=512m -XX:+HeapDumpOnOutOfMemoryError
 
-# Directorio de cache personalizado en disco D
-org.gradle.cache.dir=D:\\\\gradle_cache\\\\caches
+# Directorio de cache personalizado en disco F
+org.gradle.cache.dir={gradle_user_home.replace(os.sep, '/')}
 
 # Configuración de Android optimizada
 android.enableBuildCache=true
@@ -891,79 +897,86 @@ kotlin.parallel.tasks.in.project=true
             f.write(gradle_properties_content)
         safe_log(logbox, f"✓ Configuración global de Gradle creada en: {global_gradle_properties}")
         
-        # 4. Configurar build directory y namespace en el proyecto Android
+        # 4. Configurar build directory dinámicamente en el proyecto Android
         android_gradle_path = os.path.join(ANDROID_DIR, "app", "build.gradle")
         if os.path.exists(android_gradle_path):
             with open(android_gradle_path, 'r', encoding='utf-8') as f:
-                lines = f.readlines()
+                content = f.read()
 
-            # Comprobar si las configuraciones ya existen
-            namespace_exists = any('namespace' in line for line in lines)
-            builddir_exists = any('buildDir' in line for line in lines)
+            # Reemplazar dinámicamente el buildDir usando regex
+            new_build_dir_path = os.path.join(BASE_DIR, "android_builds", nombre_paquete_limpio).replace(os.sep, "/")
+            # Esta regex busca una línea que contenga 'buildDir =' y la reemplaza entera
+            content, count = re.subn(
+                r'^\s*buildDir\s*=\s*.*', 
+                f'    buildDir = file("{new_build_dir_path}")', 
+                content,
+                flags=re.MULTILINE
+            )
 
-            if not namespace_exists or not builddir_exists:
-                with open(android_gradle_path, 'w', encoding='utf-8') as f:
-                    inserted = False
-                    for line in lines:
-                        f.write(line)
-                        if 'android {' in line and not inserted:
-                            if not namespace_exists:
-                                f.write(f'    namespace "com.libros3dar.{nombre_paquete_limpio}"\n')
-                            if not builddir_exists:
-                                # Usar una ruta relativa al buildDir del proyecto para mayor portabilidad
-                                f.write(f'    buildDir = file("D:/android_builds/{nombre_paquete_limpio}")\n')
-                            inserted = True
-                safe_log(logbox, "✓ build.gradle actualizado con namespace y buildDir.")
+            if count > 0:
+                safe_log(logbox, f"✓ build.gradle: 'buildDir' actualizado a: {new_build_dir_path}")
+            else:
+                # Si no se encontró, lo insertamos después de 'android {'
+                content = re.sub(
+                    r'(android\s*\{)', 
+                    rf'\1\n    buildDir = file("{new_build_dir_path}")', 
+                    content,
+                    count=1 # Solo reemplazar la primera ocurrencia
+                )
+                safe_log(logbox, f"✓ build.gradle: 'buildDir' insertado: {new_build_dir_path}")
+            
+            with open(android_gradle_path, 'w', encoding='utf-8') as f:
+                f.write(content)
         
-        # 5. Crear directorios necesarios en disco D
+        # 5. Crear directorios necesarios en disco F
         directories_to_create = [
-            r"D:\gradle_cache",
-            r"D:\gradle_cache\caches", 
-            r"D:\gradle_cache\wrapper",
-            r"D:\android_builds",
-            r"D:\android_temp"
+            os.path.join(BASE_DIR, "gradle_cache"),
+            os.path.join(BASE_DIR, "gradle_cache", "caches"), 
+            os.path.join(BASE_DIR, "gradle_cache", "wrapper"),
+            os.path.join(BASE_DIR, "android_builds"),
+            os.path.join(BASE_DIR, "android_temp")
         ]
         
         for dir_path in directories_to_create:
             os.makedirs(dir_path, exist_ok=True)
         
-        safe_log(logbox, "✓ Directorios de cache creados en disco D")
+        safe_log(logbox, "✓ Directorios de cache creados en disco F")
         
         # 6. Configurar variables de entorno adicionales para Java/Android
-        os.environ['JAVA_OPTS'] = "-Djava.io.tmpdir=D:\\android_temp"
-        os.environ['GRADLE_OPTS'] = "-Djava.io.tmpdir=D:\\android_temp -Xmx4096m"
+        os.environ['JAVA_OPTS'] = f"-Djava.io.tmpdir={os.path.join(BASE_DIR, 'android_temp').replace(os.sep, '/')}"
+        os.environ['GRADLE_OPTS'] = f"-Djava.io.tmpdir={os.path.join(BASE_DIR, 'android_temp').replace(os.sep, '/')} -Xmx4096m"
         
-        safe_log(logbox, "✓ Variables de entorno configuradas para usar disco D")
-        safe_log(logbox, "✓ Configuración de Gradle en disco D completada exitosamente")
+        safe_log(logbox, "✓ Variables de entorno configuradas para usar disco F")
+        safe_log(logbox, "✓ Configuración de Gradle en disco F completada exitosamente")
         
         return True
         
     except Exception as e:
-        safe_log(logbox, f"✗ ERROR configurando Gradle en disco D: {e}")
+        safe_log(logbox, f"✗ ERROR configurando Gradle en disco F: {e}")
         return False
 
-def compilar_apk_usando_disco_d(logbox, nombre_paquete_limpio):
+def compilar_apk_usando_disco_f(logbox, nombre_paquete_limpio):
     '''
-    Versión del compilador que usa exclusivamente el disco D
+    Versión del compilador que usa exclusivamente el disco F
     '''
     try:
-        # 1. Configurar variables de entorno para usar disco D
+        # 1. Configurar variables de entorno para usar disco F
         temp_base_dir = os.path.join(BASE_DIR, "temporal")
         os.environ['GRADLE_USER_HOME'] = os.path.join(temp_base_dir, "gradle")
         os.environ['JAVA_OPTS'] = f'-Duser.home={temp_base_dir} -Djava.io.tmpdir={os.path.join(temp_base_dir, "temp")}'
         os.environ['TEMP'] = os.path.join(temp_base_dir, "temp")
         os.environ['TMP'] = os.path.join(temp_base_dir, "temp")
         
-        safe_log(logbox, f"✓ Variables de entorno configuradas para disco D")
+        safe_log(logbox, f"✓ Variables de entorno configuradas para disco F")
         safe_log(logbox, f"  GRADLE_USER_HOME: {os.environ['GRADLE_USER_HOME']}")
         
         # 2. Verificar espacio una vez más
-        disk_d = psutil.disk_usage('D:')
-        free_gb_d = disk_d.free / (1024**3)
-        safe_log(logbox, f"Espacio disponible en D: {free_gb_d:.1f} GB")
+        disk_f = psutil.disk_usage('F:')
+        free_gb_f = disk_f.free / (1024**3)
+        safe_log(logbox, f"Espacio disponible en F: {free_gb_f:.1f} GB")
         
-        if free_gb_d < 8:
-            safe_log(logbox, f"⚠ ADVERTENCIA: Poco espacio en D: {free_gb_d:.1f} GB")
+        if free_gb_f < 8:
+            safe_log(logbox, f"⚠ ADVERTENCIA: Poco espacio en F: {free_gb_f:.1f} GB")
         
         # 3. Limpiar build anterior
         build_dir = os.path.join(ANDROID_DIR, "app", "build")
@@ -974,9 +987,9 @@ def compilar_apk_usando_disco_d(logbox, nombre_paquete_limpio):
             except Exception as e:
                 safe_log(logbox, f"⚠ No se pudo limpiar build anterior: {e}")
         
-        # 4. Configurar gradle.properties específico para disco D
+        # 4. Configurar gradle.properties específico para disco F
         gradle_props_path = os.path.join(ANDROID_DIR, "gradle.properties")
-        gradle_props_content = f'''# Configuración para usar disco D exclusivamente
+        gradle_props_content = f'''# Configuración para usar disco F exclusivamente
 org.gradle.jvmargs=-Xmx2048m -XX:MaxMetaspaceSize=256m -Dfile.encoding=UTF-8 -Djava.io.tmpdir={os.path.join(temp_base_dir, "temp").replace(os.sep, '/')}
 org.gradle.daemon=false
 org.gradle.parallel=false
@@ -992,12 +1005,12 @@ android.suppressUnsupportedCompileSdk=34
         
         with open(gradle_props_path, 'w', encoding='utf-8') as f:
             f.write(gradle_props_content)
-        safe_log(logbox, "✓ gradle.properties actualizado para disco D")
+        safe_log(logbox, "✓ gradle.properties actualizado para disco F")
         
-        # 5. Intentar build con configuración de disco D
+        # 5. Intentar build con configuración de disco F
         max_intentos = 2
         for intento in range(1, max_intentos + 1):
-            safe_log(logbox, f"=== INTENTO {intento}/{max_intentos} DE COMPILACIÓN USANDO DISCO D ===")
+            safe_log(logbox, f"=== INTENTO {intento}/{max_intentos} DE COMPILACIÓN USANDO DISCO F ===")
             
             try:
                 # Preparar entorno para subprocess
@@ -1030,8 +1043,8 @@ android.suppressUnsupportedCompileSdk=34
                 
                 safe_log(logbox, "✓ Capacitor sync completado")
                 
-                # Build de APK usando disco D
-                safe_log(logbox, "Iniciando compilación de APK usando disco D...")
+                # Build de APK usando disco F
+                safe_log(logbox, "Iniciando compilación de APK usando disco F...")
                 
                 gradle_cmd = [
                     "gradlew.bat", 
@@ -1056,14 +1069,28 @@ android.suppressUnsupportedCompileSdk=34
                 )
                 
                 if result.returncode == 0:
-                    safe_log(logbox, "✓ ¡APK COMPILADO EXITOSAMENTE USANDO DISCO D!")
+                    safe_log(logbox, "✓ ¡APK COMPILADO EXITOSAMENTE USANDO DISCO F!")
                     
-                    # Buscar y copiar APK desde la ruta de salida estándar de Gradle
-                    apk_origen = os.path.join(
+                    # Buscar y copiar APK desde la ruta de salida, que puede ser la estándar o una personalizada
+                    
+                    # Ruta 1: El custom build directory en disco F (cuando hay poco espacio en C:)
+                    custom_build_dir = os.path.join(BASE_DIR, "android_builds", nombre_paquete_limpio)
+                    apk_origen_custom = os.path.join(custom_build_dir, "outputs", "apk", "debug", "app-debug.apk")
+                    
+                    # Ruta 2: El build directory estándar dentro del proyecto
+                    apk_origen_standard = os.path.join(
                         ANDROID_DIR, "app", "build", "outputs", "apk", "debug", "app-debug.apk"
                     )
-                    
-                    if os.path.exists(apk_origen):
+
+                    apk_origen = None
+                    if os.path.exists(apk_origen_custom):
+                        safe_log(logbox, f"✓ APK encontrado en la ruta personalizada (disco F): {apk_origen_custom}")
+                        apk_origen = apk_origen_custom
+                    elif os.path.exists(apk_origen_standard):
+                        safe_log(logbox, f"✓ APK encontrado en la ruta estándar: {apk_origen_standard}")
+                        apk_origen = apk_origen_standard
+
+                    if apk_origen:
                         apk_dst_dir = os.path.join(OUTPUT_APK_DIR, nombre_paquete_limpio)
                         os.makedirs(apk_dst_dir, exist_ok=True)
                         apk_dst_file = os.path.join(apk_dst_dir, f"{nombre_paquete_limpio}.apk")
@@ -1086,16 +1113,16 @@ android.suppressUnsupportedCompileSdk=34
                         
                         return apk_dst_file
                     else:
-                        safe_log(logbox, f"✗ No se encontró el APK en la ruta estándar: {apk_origen}")
-                        # Listar archivos en directorio de salida para debug
-                        output_dir = os.path.join(ANDROID_DIR, "app", "build", "outputs")
-                        if os.path.exists(output_dir):
-                            safe_log(logbox, f"Contenido de {output_dir}:")
-                            for item in os.listdir(output_dir):
-                                safe_log(logbox, f"  - {item}")
-                                if os.path.isdir(os.path.join(output_dir, item)):
-                                    for subitem in os.listdir(os.path.join(output_dir, item)):
-                                        safe_log(logbox, f"    - {subitem}")
+                        safe_log(logbox, f"✗ ERROR: Build reportó éxito, pero no se encontró el APK en ninguna ruta esperada.")
+                        safe_log(logbox, f"  - Buscado en (estándar): {apk_origen_standard}")
+                        safe_log(logbox, f"  - Buscado en (personalizada): {apk_origen_custom}")
+                        # Listar archivos en directorios de salida para debug
+                        output_dir_std = os.path.join(ANDROID_DIR, "app", "build", "outputs")
+                        if os.path.exists(output_dir_std):
+                            safe_log(logbox, f"Contenido de {output_dir_std}: {os.listdir(output_dir_std)}")
+                        
+                        if os.path.exists(custom_build_dir):
+                            safe_log(logbox, f"Contenido de {custom_build_dir}: {os.listdir(custom_build_dir)}")
                 else:
                     # Analizar errores
                     safe_log(logbox, f"✗ Build falló con código: {result.returncode}")
@@ -1137,11 +1164,11 @@ android.suppressUnsupportedCompileSdk=34
             except Exception as e:
                 safe_log(logbox, f"✗ ERROR en intento {intento}: {str(e)}")
         
-        safe_log(logbox, "======== BUILD APK FALLIDO USANDO DISCO D ========")
+        safe_log(logbox, "======== BUILD APK FALLIDO USANDO DISCO F ========")
         return None
         
     except Exception as e:
-        safe_log(logbox, f"✗ ERROR CRÍTICO en compilar_apk_usando_disco_d: {e}")
+        safe_log(logbox, f"✗ ERROR CRÍTICO en compilar_apk_usando_disco_f: {e}")
         return None
 
 def configurar_webview_camera_completo(logbox, android_dir_arg, package_name):
@@ -1273,18 +1300,44 @@ def elimina_xml_adaptativos(logbox):
 
 def preparar_proyecto_capacitor(logbox):
     """
-    Copia una plantilla limpia de Capacitor al directorio de trabajo del proyecto.
-    Esto asegura que cada build comience con una base fresca y sin artefactos anteriores.
+    Prepara el proyecto Capacitor en el directorio de trabajo, preservando
+    las plataformas nativas (como 'android') si ya existen.
+    Copia los archivos de la plantilla web y de configuración, asegurando un
+    estado limpio para el build sin destruir el proyecto nativo.
     """
-    capacitor_dir = PROJECT_DIR # Usamos PROJECT_DIR como el directorio de trabajo
+    capacitor_dir = PROJECT_DIR
+    template_dir = CAPACITOR_TEMPLATE
     safe_log(logbox, f"Preparando proyecto Capacitor en: {capacitor_dir}")
-    if os.path.exists(capacitor_dir):
-        safe_log(logbox, f"Limpiando proyecto Capacitor existente: {capacitor_dir}")
-        shutil.rmtree(capacitor_dir) # Elimina la carpeta existente
-    shutil.copytree(CAPACITOR_TEMPLATE, capacitor_dir) # Copia la plantilla limpia
-    safe_log(logbox, f"✓ Plantilla Capacitor copiada a: {capacitor_dir}")
 
-    # Asegurarse de que las carpetas mipmap existan en el proyecto de trabajo después de la copia
+    # Asegurarse de que el directorio de trabajo exista
+    os.makedirs(capacitor_dir, exist_ok=True)
+
+    safe_log(logbox, "Refrescando proyecto desde la plantilla...")
+    # Iterar sobre los contenidos de la plantilla para copiarlos
+    for item in os.listdir(template_dir):
+        template_item_path = os.path.join(template_dir, item)
+        project_item_path = os.path.join(capacitor_dir, item)
+
+        # No tocar las carpetas de plataformas nativas ni node_modules
+        if item in ['android', 'ios', 'node_modules']:
+            safe_log(logbox, f"  - Omitiendo '{item}' para preservar la plataforma nativa/dependencias.")
+            continue
+
+        # Si el item existe en el proyecto, lo borramos para asegurar una copia limpia
+        if os.path.exists(project_item_path):
+            if os.path.isdir(project_item_path):
+                shutil.rmtree(project_item_path)
+            else:
+                os.remove(project_item_path)
+
+        # Copiamos el item desde la plantilla al proyecto
+        if os.path.isdir(template_item_path):
+            shutil.copytree(template_item_path, project_item_path)
+        else:
+            shutil.copy2(template_item_path, project_item_path)
+    safe_log(logbox, "✓ Proyecto refrescado desde la plantilla preservando plataformas.")
+
+    # Asegurarse de que las carpetas mipmap existan en el proyecto de trabajo después de la copia.
     # Esto es importante para la generación de íconos.
     mipmap_folders = [
         os.path.join(ICONO_BASE_DIR, "mipmap-mdpi"),
@@ -1294,9 +1347,15 @@ def preparar_proyecto_capacitor(logbox):
         os.path.join(ICONO_BASE_DIR, "mipmap-xxxhdpi"),
         os.path.join(ICONO_BASE_DIR, "mipmap-anydpi-v26"),
     ]
-    for folder in mipmap_folders:
-        os.makedirs(folder, exist_ok=True)
-    safe_log(logbox, "✓ Carpetas mipmap en proyecto de trabajo verificadas/creadas.")
+    # Esta parte asume que ANDROID_DIR existe. Si no existe, fallará.
+    # El flujo de trabajo implica que el usuario ejecute `npx cap add android` en algún momento,
+    # lo cual crea el directorio 'android'. Nuestra función ahora lo preserva.
+    if os.path.exists(ANDROID_DIR):
+        for folder in mipmap_folders:
+            os.makedirs(folder, exist_ok=True)
+        safe_log(logbox, "✓ Carpetas mipmap en proyecto de trabajo verificadas/creadas.")
+    else:
+        safe_log(logbox, "ADVERTENCIA: El directorio 'android' no existe. La creación de carpetas mipmap se omitirá. Ejecute 'npx cap add android' en el directorio del proyecto.")
 
 # ---------------------- CLASE PRINCIPAL GUI ----------------------
 
@@ -1568,13 +1627,11 @@ class GeneradorGUI:
             os.makedirs(www_patterns_dir, exist_ok=True)
             os.makedirs(www_data_dir, exist_ok=True)
             
-            # Copiar camera_para.dat desde la plantilla de Capacitor
-            src_camera_para = os.path.join(CAPACITOR_TEMPLATE, "www", "data", "camera_para.dat")
-            if os.path.exists(src_camera_para):
-                shutil.copy2(src_camera_para, os.path.join(www_data_dir, "camera_para.dat"))
-                safe_log(self.logbox, "✓ camera_para.dat copiado a www/data/")
-            else:
-                safe_log(self.logbox, "⚠ ADVERTENCIA CRÍTICA: camera_para.dat no encontrado en la plantilla. El visor AR fallará.")
+            # Asegurar que el archivo camera_para.dat exista, descargándolo si es necesario.
+            if not ensure_camera_para_dat(self.logbox, www_data_dir):
+                # La función `ensure_camera_para_dat` ya muestra un messagebox de error.
+                # Detener la generación del paquete es lo correcto si el archivo es crítico.
+                return False
 
 
             ar_content_list = []
@@ -1595,34 +1652,24 @@ class GeneradorGUI:
                     os.makedirs(os.path.dirname(img_dest_paquete), exist_ok=True)
                     shutil.copy2(par['imagen'], img_dest_paquete)
 
-                    # --- Lógica de Generación de Marcadores Orquestada ---
+                    # --- Lógica de Generación de Marcadores Simplificada (Solo .patt) ---
                     nombre_limpio = par['base']
-                    marker_type = None
-                    marker_url = ""
+                    marker_type = 'pattern' # El nuevo frontend está diseñado para 'pattern'
                     
-                    # Intento 1: Generar marcador NFT
-                    if generar_marcador_nft(self.logbox, img_dest_paquete, nombre_limpio):
-                        marker_type = 'nft'
-                        marker_url = os.path.join("assets", "markers", nombre_limpio).replace("\\", "/")
-                    else:
-                        # Intento 2 (Fallback): Generar patrón .patt con OpenCV
-                        safe_log(self.logbox, f"Fallback a OpenCV para generar patrón .patt para {nombre_limpio}")
-                        patt_dest_www = os.path.join(www_patterns_dir, f"{nombre_limpio}.patt")
-                        if generar_patt_opencv(self.logbox, img_dest_paquete, patt_dest_www):
-                            marker_type = 'pattern'
-                            marker_url = os.path.join("patterns", f"{nombre_limpio}.patt").replace("\\", "/")
-                        else:
-                            safe_log(self.logbox, f"✗ ERROR: Fallaron todos los métodos para generar un marcador para {nombre_limpio}.")
-
-                    # Construir el enlace para el menú principal
-                    if marker_type:
+                    # Generar patrón .patt con OpenCV
+                    patt_dest_www = os.path.join(www_patterns_dir, f"{nombre_limpio}.patt")
+                    if generar_patt_opencv(self.logbox, img_dest_paquete, patt_dest_www):
+                        marker_url = os.path.join("patterns", f"{nombre_limpio}.patt").replace("\\", "/")
                         model_url = os.path.join("models", f"{nombre_limpio}.glb").replace("\\", "/")
+                        
                         ar_content_list.append({
                             "type": marker_type,
                             "markerUrl": marker_url,
                             "modelUrl": model_url
                         })
                         safe_log(self.logbox, f"✓ Marcador '{marker_type}' procesado para: {nombre_limpio}")
+                    else:
+                        safe_log(self.logbox, f"✗ ERROR: Falló la generación del marcador .patt para {nombre_limpio}.")
 
 
             # 2. Generar y guardar claves
@@ -2052,16 +2099,41 @@ bpy.ops.export_scene.gltf(filepath=r'{destino}', export_format='GLB', export_app
 
     def crear_y_copiar_frontend_ar(self, logbox):
         """
-        Crea el archivo frontend-ar.js con el contenido proporcionado por el usuario
-        y lo copia a la carpeta www/js del proyecto.
+        Crea el archivo frontend-ar.js con una lógica robusta para solicitar
+        permisos de cámara y manejar la inicialización de AR.js.
         """
         frontend_ar_code = """
-// frontend-ar.js
-// Versión dinámica y corregida para pantalla completa y múltiples marcadores.
-
+// frontend-ar.js - Versión corregida para manejo de cámara y AR.js
 document.addEventListener('DOMContentLoaded', () => {
-    console.log("Entorno AR dinámico cargado.");
+    console.log("Entorno AR cargado. Verificando dispositivo y permisos...");
 
+    const isMobile = /Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    if (!isMobile) {
+        console.warn("AR.js funciona mejor en dispositivos móviles.");
+        document.body.innerHTML = '<div style="text-align:center;padding:20px;"><h2>Esta función está optimizada para dispositivos móviles</h2><p>Por favor abre esta aplicación desde un teléfono o tablet.</p></div>';
+        return;
+    }
+
+    requestCameraPermission();
+});
+
+function requestCameraPermission() {
+    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        navigator.mediaDevices.getUserMedia({ video: true })
+            .then(() => {
+                console.log("Permiso de cámara concedido por el usuario. Inicializando AR...");
+                initializeAR();
+            })
+            .catch(err => {
+                console.error("Permiso de cámara denegado:", err);
+                showError("Se requiere permiso de cámara para usar la Realidad Aumentada. Por favor, habilita el permiso en la configuración de la aplicación y reinicia.");
+            });
+    } else {
+        showError("Tu navegador no soporta el acceso a la cámara (getUserMedia).");
+    }
+}
+
+function initializeAR() {
     const scene = new THREE.Scene();
     const camera = new THREE.Camera();
     scene.add(camera);
@@ -2070,109 +2142,153 @@ document.addEventListener('DOMContentLoaded', () => {
         antialias: true,
         alpha: true
     });
-    renderer.setClearColor(new THREE.Color('lightgrey'), 0);
+    
+    renderer.setPixelRatio(window.devicePixelRatio);
     renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.domElement.style.position = 'absolute';
-    renderer.domElement.style.top = '0px';
-    renderer.domElement.style.left = '0px';
+    renderer.domElement.style.position = 'fixed';
+    renderer.domElement.style.top = '0';
+    renderer.domElement.style.left = '0';
     document.body.appendChild(renderer.domElement);
 
-    const arToolkitSource = new THREEx.ArToolkitSource({
-        sourceType: 'webcam',
-    });
-
-    function onResize() {
-        arToolkitSource.onResizeElement();
-        arToolkitSource.copyElementSizeTo(renderer.domElement);
-        if (arToolkitContext.arController !== null) {
-            arToolkitSource.copyElementSizeTo(arToolkitContext.arController.canvas);
-        }
-    }
-
-    arToolkitSource.init(function onReady() {
-        setTimeout(() => onResize(), 100); // Pequeño delay para asegurar que todo esté listo
-    });
-    window.addEventListener('resize', onResize);
-
-    const arToolkitContext = new THREEx.ArToolkitContext({
-        cameraParametersUrl: 'data/camera_para.dat',
-        detectionMode: 'mono_and_matrix',
-        matrixCodeType: '3x3',
-    });
-
-    arToolkitContext.init(function onCompleted() {
-        camera.projectionMatrix.copy(arToolkitContext.getProjectionMatrix());
-    });
-
-    // Añadir luz a la escena para que los modelos no se vean oscuros
-    const ambientLight = new THREE.AmbientLight(0xcccccc, 0.5);
-    scene.add(ambientLight);
-    const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
-    directionalLight.position.set(1, 1, 0).normalize();
-    scene.add(directionalLight);
-
-    // --- Carga dinámica de TODOS los marcadores y modelos ---
-    if (!window.arContent || !Array.isArray(window.arContent)) {
-        console.error('El contenido AR (window.arContent) no está definido o no es un array.');
-        return;
-    }
-
-    window.arContent.forEach(content => {
-        console.log(`Configurando marcador: ${content.markerUrl}`);
-        const markerRoot = new THREE.Group();
-        scene.add(markerRoot);
-
-        new THREEx.ArMarkerControls(arToolkitContext, markerRoot, {
-            type: content.type,
-            patternUrl: content.type === 'pattern' ? content.markerUrl : null,
-            descriptorUrl: content.type === 'nft' ? content.markerUrl : null,
-            changeMatrixMode: 'cameraTransformMatrix'
+    // Crear elemento video correctamente
+    const video = document.createElement('video');
+    video.setAttribute('autoplay', '');
+    video.setAttribute('playsinline', '');
+    video.setAttribute('muted', ''); // Silenciar para permitir autoplay en algunos navegadores
+    video.style.display = 'none';
+    
+    // Obtener stream de cámara
+    navigator.mediaDevices.getUserMedia({ 
+        video: { 
+            facingMode: 'environment',
+            width: { ideal: 1280 },
+            height: { ideal: 720 }
+        } 
+    })
+    .then(stream => {
+        video.srcObject = stream;
+        video.play();
+        
+        // CORRECCIÓN: Usar sourceObject en lugar de sourceUrl
+        const arToolkitSource = new THREEx.ArToolkitSource({
+            sourceType: 'video',
+            sourceObject: video  // <-- CORRECCIÓN CRÍTICA
         });
-
-        const loader = new THREE.GLTFLoader();
-        loader.load(
-            content.modelUrl,
-            function (gltf) {
-                const model = gltf.scene;
-                const box = new THREE.Box3().setFromObject(model);
-                const size = box.getSize(new THREE.Vector3()).length();
-                const center = box.getCenter(new THREE.Vector3());
+        
+        arToolkitSource.init(() => {
+            console.log("ARToolkitSource inicializado correctamente");
+            
+            const arToolkitContext = new THREEx.ArToolkitContext({
+                cameraParametersUrl: 'data/camera_para.dat',
+                detectionMode: 'mono',
+                maxDetectionRate: 30
+            });
+            
+            arToolkitContext.init(() => {
+                console.log("ARToolkitContext inicializado correctamente");
+                camera.projectionMatrix.copy(arToolkitContext.getProjectionMatrix());
                 
-                model.position.sub(center); // Centrar el modelo
-                // Escalar el modelo para que tenga un tamaño consistente
-                const scale = 1.0 / size;
-                model.scale.set(scale, scale, scale);
-
-                markerRoot.add(model);
-                console.log(`Modelo ${content.modelUrl} cargado para marcador ${content.markerUrl}.`);
-            },
-            undefined,
-            function (error) {
-                console.error(`Error cargando el modelo ${content.modelUrl}:`, error);
-            }
-        );
+                if (window.arContent && Array.isArray(window.arContent)) {
+                    window.arContent.forEach(content => {
+                        createMarker(content, scene, arToolkitContext);
+                    });
+                } else {
+                    console.error("No se encontró contenido AR. Verifica window.arContent");
+                }
+                
+                // Iniciar loop de renderizado
+                animate(arToolkitSource, arToolkitContext, renderer, scene, camera);
+            });
+        });
+    })
+    .catch(err => {
+        console.error("Error crítico al acceder a la cámara:", err);
+        showError("No se pudo acceder a la cámara del dispositivo. Verifica los permisos de la aplicación.");
     });
+}
 
-    function animate() {
-        requestAnimationFrame(animate);
-        if (arToolkitSource.ready === false) return;
+function createMarker(content, scene, arToolkitContext) {
+    console.log(`Creando marcador para: ${content.markerUrl}`);
+    
+    const markerRoot = new THREE.Group();
+    scene.add(markerRoot);
+
+    const markerControls = new THREEx.ArMarkerControls(
+        arToolkitContext,
+        markerRoot,
+        {
+            type: 'pattern',
+            patternUrl: content.markerUrl,
+            changeMatrixMode: 'cameraTransformMatrix'
+        }
+    );
+
+    const loader = new THREE.GLTFLoader();
+    loader.load(
+        content.modelUrl,
+        (gltf) => {
+            const model = gltf.scene;
+            console.log(`Modelo cargado: ${content.modelUrl}`);
+            
+            // Ajustar escala y posición
+            const box = new THREE.Box3().setFromObject(model);
+            const size = box.getSize(new THREE.Vector3());
+            const maxSize = Math.max(size.x, size.y, size.z);
+            const scale = 0.8 / maxSize;
+            model.scale.set(scale, scale, scale);
+            
+            // Centrar modelo
+            const center = box.getCenter(new THREE.Vector3());
+            model.position.sub(center);
+            
+            markerRoot.add(model);
+        },
+        (progress) => {
+            console.log(`Progreso carga modelo: ${progress.loaded / progress.total * 100}%`);
+        },
+        (error) => {
+            console.error(`Error cargando modelo ${content.modelUrl}:`, error);
+        }
+    );
+}
+
+function animate(arToolkitSource, arToolkitContext, renderer, scene, camera) {
+    requestAnimationFrame(() => animate(arToolkitSource, arToolkitContext, renderer, scene, camera));
+    
+    if (arToolkitSource && arToolkitSource.ready) {
         arToolkitContext.update(arToolkitSource.domElement);
         renderer.render(scene, camera);
     }
+}
 
-    animate();
+function showError(message) {
+    document.body.innerHTML = `
+        <div style="position:fixed; top:0; left:0; width:100%; height:100%; background:white; color:red; display:flex; flex-direction:column; justify-content:center; align-items:center; text-align:center; padding:20px; box-sizing:border-box;">
+            <h2>Error de Cámara</h2>
+            <p>${message}</p>
+            <button onclick="location.reload()" style="padding:10px 20px; margin-top:20px; font-size:16px;">
+                Reintentar
+            </button>
+        </div>
+    `;
+}
+
+// Manejar cambios de orientación
+window.addEventListener('resize', () => {
+    if (window.arToolkitSource && window.arToolkitSource.ready) {
+        window.arToolkitSource.onResizeElement();
+        window.arToolkitSource.copyElementSizeTo(renderer.domElement);
+    }
 });
 """
-        # Crear el archivo en el directorio del generador
         src_path = os.path.join(GEN_DIR, "frontend-ar.js")
         with open(src_path, "w", encoding="utf-8") as f:
             f.write(frontend_ar_code)
         
-        # Copiarlo al directorio www/js del proyecto
         destino_js_dir = os.path.join(WWW_DIR, "js")
         os.makedirs(destino_js_dir, exist_ok=True)
         shutil.copy2(src_path, destino_js_dir)
-        safe_log(logbox, f"✓ frontend-ar.js (versión multi-marcador) creado y copiado a {destino_js_dir}")
+        safe_log(self.logbox, f"✓ frontend-ar.js (versión robusta con permisos) creado y copiado a {destino_js_dir}")
 
     def generar_iconos(self):
         """
@@ -2273,12 +2389,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
         # 2. Ahora que el proyecto existe, verificar el espacio y configurar si es necesario.
         if not verificar_espacio_disco(self.logbox):
-            safe_log(self.logbox, "⚠ Configurando automáticamente Gradle para usar disco D...")
-            if not configurar_gradle_en_disco_d(self.logbox, nombre):
-                messagebox.showerror("Error", "No se pudo configurar Gradle para usar disco D")
+            safe_log(self.logbox, "⚠ Configurando automáticamente Gradle para usar disco F...")
+            if not configurar_gradle_en_disco_f(self.logbox, nombre):
+                messagebox.showerror("Error", "No se pudo configurar Gradle para usar disco F")
                 return
             else:
-                safe_log(self.logbox, "✓ La configuración de Gradle para usar el disco D parece haber funcionado.")
+                safe_log(self.logbox, "✓ La configuración de Gradle para usar el disco F parece haber funcionado.")
 
         # 3. Realizar el resto de las operaciones sobre el proyecto ya copiado y configurado.
         diagnosticar_espacio_disco(self.logbox)
@@ -2300,9 +2416,8 @@ document.addEventListener('DOMContentLoaded', () => {
             app_name = self.nombre_libro.get().strip()
             safe_log(self.logbox, f"✓ Usando packageName unificado: {package_name}")
 
-            # 1. Crear MainActivity.java y helpers
-            crear_main_activity(package_name)
-            crear_camera_permission_helper(self.logbox, package_name)
+            # 1. Crear MainActivity.java (que ahora incluye toda la lógica de permisos)
+            crear_main_activity(self.logbox, package_name)
 
             # 2. Actualizar capacitor.config.json
             actualizar_capacitor_config(self.logbox, package_name, app_name)
@@ -2364,8 +2479,8 @@ document.addEventListener('DOMContentLoaded', () => {
             # Asegurarse de que capacitor.js esté presente en www/
             ensure_capacitor_js(self.logbox, PROJECT_DIR)
             
-            # Usar la nueva función para compilar usando el disco D
-            apk_path = compilar_apk_usando_disco_d(self.logbox, nombre_paquete_limpio)
+            # Usar la nueva función para compilar usando el disco F
+            apk_path = compilar_apk_usando_disco_f(self.logbox, nombre_paquete_limpio)
 
             if apk_path:
                 final_apk_dest_dir = os.path.join(OUTPUT_APK_DIR, nombre_paquete_limpio)
@@ -2379,6 +2494,13 @@ document.addEventListener('DOMContentLoaded', () => {
                 self.set_progress("✅ ¡APK generado y build terminado!", "green")
                 safe_log(self.logbox, "======== BUILD APK COMPLETADO ========")
                 messagebox.showinfo("Éxito", f"APK generado y copiado a: {apk_path}")
+
+                # Abrir la carpeta de salida automáticamente
+                try:
+                    safe_log(self.logbox, f"Abriendo la carpeta de salida: {final_apk_dest_dir}")
+                    os.startfile(final_apk_dest_dir)
+                except Exception as e:
+                    safe_log(self.logbox, f"✗ No se pudo abrir la carpeta de salida automáticamente: {e}")
             else:
                 self.set_progress("✗ Build de APK fallido.", "red")
                 safe_log(self.logbox, "======== BUILD APK FALLIDO ========")
@@ -2399,22 +2521,21 @@ document.addEventListener('DOMContentLoaded', () => {
         """
         El hilo que realmente corre el servidor y ngrok.
         """
-        if not os.path.exists(WWW_DIR) or not os.listdir(WWW_DIR):
-            safe_log(self.logbox, "✗ ERROR: El directorio 'www' está vacío. Genere un paquete primero.")
-            self.set_progress("Error: Directorio 'www' vacío.", "red")
-            messagebox.showerror("Error", "El directorio 'www' está vacío. Por favor, genere un paquete antes de iniciar el servidor.")
-            return
-
         # Define a simple Flask app to serve the 'www' directory
         app = Flask(__name__)
         CORS(app) # Habilitar CORS para todas las rutas
 
         @app.route('/<path:path>')
         def serve_static(path):
+            if not os.path.exists(WWW_DIR):
+                return "El directorio 'www' no ha sido generado todavía.", 404
             return send_from_directory(WWW_DIR, path)
 
         @app.route('/')
         def serve_index():
+            index_path = os.path.join(WWW_DIR, 'index.html')
+            if not os.path.exists(index_path):
+                return "index.html no encontrado. Por favor, genere el paquete primero.", 404
             return send_from_directory(WWW_DIR, 'index.html')
         
         @app.route('/activar', methods=['POST'])
@@ -2454,3 +2575,4 @@ if __name__ == "__main__":
     root = Tk()
     app = GeneradorGUI(root)
     root.mainloop()
+
