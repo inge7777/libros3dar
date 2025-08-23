@@ -82,6 +82,35 @@ def get_package_name(nombre_limpio: str) -> str:
     """Genera el nombre del paquete de Android."""
     return f"com.librosdar.{nombre_limpio}"
 
+def actualizar_buildgradle_con_rutadinamica(nombre_paquete_limpio, logbox):
+    build_gradle_path = os.path.join(ANDROID_DIR, "app", "build.gradle")
+    if not os.path.exists(build_gradle_path):
+        safe_log(logbox, f"✗ ERROR: No se encuentra {build_gradle_path}")
+        return False
+
+    try:
+        with open(build_gradle_path, "r", encoding="utf-8") as f:
+            contenido = f.read()
+
+        # Construimos la nueva línea con la ruta dinámica
+        nueva_linea_builddir = f'    buildDir = file("F:/linux/3d-AR/android_builds/{nombre_paquete_limpio}")'
+
+        # Reemplazamos la línea buildDir si existe, si no, la insertamos justo después de la línea "android {"
+        if re.search(r'^\s*buildDir\s*=.*$', contenido, flags=re.MULTILINE):
+            contenido_modificado = re.sub(r'^\s*buildDir\s*=.*$', nueva_linea_builddir, contenido, flags=re.MULTILINE)
+        else:
+            contenido_modificado = re.sub(r'^android\s*\{', f'android {{\n{nueva_linea_builddir}', contenido, flags=re.MULTILINE)
+
+        with open(build_gradle_path, "w", encoding="utf-8") as f:
+            f.write(contenido_modificado)
+
+        safe_log(logbox, f"✓ build.gradle actualizado con buildDir dinámico para: {nombre_paquete_limpio}")
+        return True
+
+    except Exception as e:
+        safe_log(logbox, f"✗ ERROR modificando build.gradle: {e}")
+        return False
+
 def preparar_rutas_java(package_name):
     java_dir = os.path.join(ANDROID_DIR, "app", "src", "main", "java", *package_name.split('.'))
     os.makedirs(java_dir, exist_ok=True)
@@ -841,118 +870,77 @@ def verificar_espacio_disco(logbox):
 
 def configurar_gradle_en_disco_f(logbox, nombre_paquete_limpio):
     """
-    Configura Gradle para usar el disco F cuando el disco C tiene poco espacio libre.
-    Esta función modifica las configuraciones de Gradle para optimizar el uso de espacio en disco.
-    
-    Args:
-        logbox: Widget de log para mostrar mensajes de estado
-        nombre_paquete_limpio: El nombre del paquete para usar en el namespace.
-    
-    Returns:
-        bool: True si la configuración fue exitosa, False en caso contrario
+    Configura Gradle para usar el disco F de forma robusta, asegurando que el
+    buildDir se establezca dinámicamente en el archivo build.gradle.
     """
     try:
-        safe_log(logbox, "Configurando Gradle para usar disco F...")
-        
-        # 1. Configurar GRADLE_USER_HOME para usar disco F
+        safe_log(logbox, "Iniciando configuración de Gradle para usar disco F...")
+
+        # --- 1. Crear directorios necesarios en disco F ---
         gradle_user_home = os.path.join(BASE_DIR, "gradle_cache")
-        os.makedirs(gradle_user_home, exist_ok=True)
+        java_temp_dir = os.path.join(BASE_DIR, "android_temp")
+        custom_build_dir = os.path.join(BASE_DIR, "android_builds", nombre_paquete_limpio)
+        for path in [gradle_user_home, java_temp_dir, custom_build_dir]:
+            os.makedirs(path, exist_ok=True)
+        safe_log(logbox, f"✓ Directorios de Gradle y build creados/verificados en: {BASE_DIR}")
+
+        # --- 2. Modificar build.gradle de forma robusta ---
+        android_gradle_path = os.path.join(ANDROID_DIR, "app", "build.gradle")
+        if not os.path.exists(android_gradle_path):
+            safe_log(logbox, f"✗ ERROR: build.gradle no encontrado en {android_gradle_path}")
+            return False
+
+        with open(android_gradle_path, 'r', encoding='utf-8') as f:
+            lines = f.readlines()
+
+        # Filtrar cualquier línea 'buildDir' existente
+        lines_sin_builddir = [line for line in lines if "buildDir" not in line]
         
-        # Establecer variable de entorno para la sesión actual
+        new_lines = []
+        build_dir_inserted = False
+        new_build_dir_line = f'    buildDir = file("{custom_build_dir.replace(os.sep, "/")}")\n'
+
+        for line in lines_sin_builddir:
+            new_lines.append(line)
+            # Insertar la nueva línea de buildDir justo después de 'android {'
+            if "android {" in line and not build_dir_inserted:
+                new_lines.insert(len(new_lines), new_build_dir_line)
+                build_dir_inserted = True
+        
+        if not build_dir_inserted:
+            safe_log(logbox, f"✗ ERROR: No se encontró el bloque 'android {{' en build.gradle.")
+            # Aún así, intentamos escribir el archivo por si acaso
+            with open(android_gradle_path, 'w', encoding='utf-8') as f:
+                f.writelines(lines_sin_builddir)
+            return False
+
+        with open(android_gradle_path, 'w', encoding='utf-8') as f:
+            f.writelines(new_lines)
+        safe_log(logbox, f"✓ build.gradle actualizado para usar buildDir dinámico: {custom_build_dir}")
+
+        # --- 3. Configurar variables de entorno y gradle.properties ---
         os.environ['GRADLE_USER_HOME'] = gradle_user_home
-        safe_log(logbox, f"✓ GRADLE_USER_HOME configurado en: {gradle_user_home}")
+        os.environ['JAVA_OPTS'] = f'-Djava.io.tmpdir="{java_temp_dir}"'
         
-        # 2. Crear archivo gradle.properties en el directorio de trabajo del proyecto
-        gradle_properties_path = os.path.join(PROJECT_DIR, "gradle.properties")
-        gradle_properties_content = f"""# Configuración optimizada para disco F
-org.gradle.daemon=true
+        gradle_props_path = os.path.join(ANDROID_DIR, "gradle.properties")
+        gradle_props_content = f"""
+org.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=512m -Dfile.encoding=UTF-8
+org.gradle.daemon=false
 org.gradle.parallel=true
 org.gradle.caching=true
-org.gradle.configureondemand=true
-
-# Configuración de memoria optimizada
-org.gradle.jvmargs=-Xmx4096m -XX:MaxPermSize=512m -XX:+HeapDumpOnOutOfMemoryError
-
-# Directorio de cache personalizado en disco F
-org.gradle.cache.dir={gradle_user_home.replace(os.sep, '/')}
-
-# Configuración de Android optimizada
-android.enableBuildCache=true
 android.useAndroidX=true
 android.enableJetifier=true
-
-# Kotlin optimizations
-kotlin.incremental=true
-kotlin.incremental.usePreciseJavaTracking=true
-kotlin.parallel.tasks.in.project=true
 """
-        
-        with open(gradle_properties_path, 'w', encoding='utf-8') as f:
-            f.write(gradle_properties_content)
-        safe_log(logbox, f"✓ Archivo gradle.properties creado en: {gradle_properties_path}")
-        
-        # 3. Configurar gradle.properties global en GRADLE_USER_HOME
-        global_gradle_properties = os.path.join(gradle_user_home, "gradle.properties")
-        with open(global_gradle_properties, 'w', encoding='utf-8') as f:
-            f.write(gradle_properties_content)
-        safe_log(logbox, f"✓ Configuración global de Gradle creada en: {global_gradle_properties}")
-        
-        # 4. Configurar build directory dinámicamente en el proyecto Android
-        android_gradle_path = os.path.join(ANDROID_DIR, "app", "build.gradle")
-        if os.path.exists(android_gradle_path):
-            with open(android_gradle_path, 'r', encoding='utf-8') as f:
-                content = f.read()
-
-            # Reemplazar dinámicamente el buildDir usando regex
-            new_build_dir_path = os.path.join(BASE_DIR, "android_builds", nombre_paquete_limpio).replace(os.sep, "/")
-            # Esta regex busca una línea que contenga 'buildDir =' y la reemplaza entera
-            content, count = re.subn(
-                r'^\s*buildDir\s*=\s*.*', 
-                f'    buildDir = file("{new_build_dir_path}")', 
-                content,
-                flags=re.MULTILINE
-            )
-
-            if count > 0:
-                safe_log(logbox, f"✓ build.gradle: 'buildDir' actualizado a: {new_build_dir_path}")
-            else:
-                # Si no se encontró, lo insertamos después de 'android {'
-                content = re.sub(
-                    r'(android\s*\{)', 
-                    rf'\1\n    buildDir = file("{new_build_dir_path}")', 
-                    content,
-                    count=1 # Solo reemplazar la primera ocurrencia
-                )
-                safe_log(logbox, f"✓ build.gradle: 'buildDir' insertado: {new_build_dir_path}")
-            
-            with open(android_gradle_path, 'w', encoding='utf-8') as f:
-                f.write(content)
-        
-        # 5. Crear directorios necesarios en disco F
-        directories_to_create = [
-            os.path.join(BASE_DIR, "gradle_cache"),
-            os.path.join(BASE_DIR, "gradle_cache", "caches"), 
-            os.path.join(BASE_DIR, "gradle_cache", "wrapper"),
-            os.path.join(BASE_DIR, "android_builds"),
-            os.path.join(BASE_DIR, "android_temp")
-        ]
-        
-        for dir_path in directories_to_create:
-            os.makedirs(dir_path, exist_ok=True)
-        
-        safe_log(logbox, "✓ Directorios de cache creados en disco F")
-        
-        # 6. Configurar variables de entorno adicionales para Java/Android
-        os.environ['JAVA_OPTS'] = f"-Djava.io.tmpdir={os.path.join(BASE_DIR, 'android_temp').replace(os.sep, '/')}"
-        os.environ['GRADLE_OPTS'] = f"-Djava.io.tmpdir={os.path.join(BASE_DIR, 'android_temp').replace(os.sep, '/')} -Xmx4096m"
-        
-        safe_log(logbox, "✓ Variables de entorno configuradas para usar disco F")
-        safe_log(logbox, "✓ Configuración de Gradle en disco F completada exitosamente")
+        with open(gradle_props_path, "w", encoding="utf-8") as f:
+            f.write(gradle_props_content)
+        safe_log(logbox, "✓ Archivo gradle.properties y variables de entorno configuradas.")
         
         return True
         
     except Exception as e:
-        safe_log(logbox, f"✗ ERROR configurando Gradle en disco F: {e}")
+        safe_log(logbox, f"✗ ERROR CRÍTICO configurando Gradle en disco F: {e}")
+        import traceback
+        safe_log(logbox, traceback.format_exc())
         return False
 
 def compilar_apk_usando_disco_f(logbox, nombre_paquete_limpio):
@@ -1070,38 +1058,55 @@ android.suppressUnsupportedCompileSdk=34
                 
                 if result.returncode == 0:
                     safe_log(logbox, "✓ ¡APK COMPILADO EXITOSAMENTE USANDO DISCO F!")
-                    
-                    # Buscar y copiar APK desde la ruta de salida, que puede ser la estándar o una personalizada
-                    
-                    # Ruta 1: El custom build directory en disco F (cuando hay poco espacio en C:)
-                    custom_build_dir = os.path.join(BASE_DIR, "android_builds", nombre_paquete_limpio)
-                    apk_origen_custom = os.path.join(custom_build_dir, "outputs", "apk", "debug", "app-debug.apk")
-                    
-                    # Ruta 2: El build directory estándar dentro del proyecto
-                    apk_origen_standard = os.path.join(
-                        ANDROID_DIR, "app", "build", "outputs", "apk", "debug", "app-debug.apk"
-                    )
+
+                    safe_log(logbox, "✓ Build completado. Buscando el archivo APK generado...")
 
                     apk_origen = None
-                    if os.path.exists(apk_origen_custom):
-                        safe_log(logbox, f"✓ APK encontrado en la ruta personalizada (disco F): {apk_origen_custom}")
-                        apk_origen = apk_origen_custom
-                    elif os.path.exists(apk_origen_standard):
-                        safe_log(logbox, f"✓ APK encontrado en la ruta estándar: {apk_origen_standard}")
-                        apk_origen = apk_origen_standard
+
+                    # Intentar primero en la ubicación personalizada (si se cambió el buildDir)
+                    custom_build_dir = os.path.join(BASE_DIR, "android_builds", nombre_paquete_limpio)
+                    apk_path_in_custom = os.path.join(custom_build_dir, "outputs", "apk", "debug", "app-debug.apk")
+                    if os.path.exists(apk_path_in_custom):
+                        apk_origen = apk_path_in_custom
+                        safe_log(logbox, f"✓ APK encontrado en la ruta personalizada: {apk_origen}")
+                    else:
+                        # Intentar en la ubicación estándar (si no se cambió el buildDir)
+                        standard_build_dir = os.path.join(ANDROID_DIR, "app", "build")
+                        apk_path_in_standard = os.path.join(standard_build_dir, "outputs", "apk", "debug", "app-debug.apk")
+                        if os.path.exists(apk_path_in_standard):
+                            apk_origen = apk_path_in_standard
+                            safe_log(logbox, f"✓ APK encontrado en la ruta estándar: {apk_origen}")
+                        else:
+                            # Si no se encuentra en las rutas conocidas, buscar recursivamente
+                            safe_log(logbox, "APK no encontrado en rutas conocidas. Buscando recursivamente...")
+                            search_dirs = [
+                                custom_build_dir,
+                                standard_build_dir
+                            ]
+                            for search_dir in search_dirs:
+                                if not os.path.exists(search_dir):
+                                    continue
+                                safe_log(logbox, f"Buscando en: {search_dir}")
+                                for root, dirs, files in os.walk(search_dir):
+                                    if "app-debug.apk" in files:
+                                        apk_origen = os.path.join(root, "app-debug.apk")
+                                        safe_log(logbox, f"✓ APK encontrado en: {apk_origen}")
+                                        break
+                                if apk_origen:
+                                    break
 
                     if apk_origen:
                         apk_dst_dir = os.path.join(OUTPUT_APK_DIR, nombre_paquete_limpio)
                         os.makedirs(apk_dst_dir, exist_ok=True)
                         apk_dst_file = os.path.join(apk_dst_dir, f"{nombre_paquete_limpio}.apk")
-                        
+
                         shutil.copy2(apk_origen, apk_dst_file)
                         safe_log(logbox, f"✓ APK copiado exitosamente a: {apk_dst_file}")
-                        
+
                         # Verificar tamaño del APK
                         apk_size_mb = os.path.getsize(apk_dst_file) / (1024 * 1024)
                         safe_log(logbox, f"✓ Tamaño del APK: {apk_size_mb:.2f} MB")
-                        
+
                         # Limpiar archivos temporales
                         try:
                             temp_cache = os.path.join(temp_base_dir, "gradle", "caches")
@@ -1110,19 +1115,10 @@ android.suppressUnsupportedCompileSdk=34
                                 safe_log(logbox, "✓ Cache temporal limpiado")
                         except:
                             pass
-                        
+
                         return apk_dst_file
                     else:
-                        safe_log(logbox, f"✗ ERROR: Build reportó éxito, pero no se encontró el APK en ninguna ruta esperada.")
-                        safe_log(logbox, f"  - Buscado en (estándar): {apk_origen_standard}")
-                        safe_log(logbox, f"  - Buscado en (personalizada): {apk_origen_custom}")
-                        # Listar archivos en directorios de salida para debug
-                        output_dir_std = os.path.join(ANDROID_DIR, "app", "build", "outputs")
-                        if os.path.exists(output_dir_std):
-                            safe_log(logbox, f"Contenido de {output_dir_std}: {os.listdir(output_dir_std)}")
-                        
-                        if os.path.exists(custom_build_dir):
-                            safe_log(logbox, f"Contenido de {custom_build_dir}: {os.listdir(custom_build_dir)}")
+                        safe_log(logbox, "✗ ERROR: Build reportó éxito, pero no se pudo encontrar el APK en los directorios de salida.")
                 else:
                     # Analizar errores
                     safe_log(logbox, f"✗ Build falló con código: {result.returncode}")
@@ -2452,16 +2448,7 @@ window.addEventListener('resize', () => {
         # 1. Preparar el proyecto limpio desde la plantilla ANTES de cualquier otra cosa.
         preparar_proyecto_capacitor(self.logbox)
 
-        # 2. Ahora que el proyecto existe, verificar el espacio y configurar si es necesario.
-        if not verificar_espacio_disco(self.logbox):
-            safe_log(self.logbox, "⚠ Configurando automáticamente Gradle para usar disco F...")
-            if not configurar_gradle_en_disco_f(self.logbox, nombre):
-                messagebox.showerror("Error", "No se pudo configurar Gradle para usar disco F")
-                return
-            else:
-                safe_log(self.logbox, "✓ La configuración de Gradle para usar el disco F parece haber funcionado.")
-
-        # 3. Realizar el resto de las operaciones sobre el proyecto ya copiado y configurado.
+        # 2. Realizar el resto de las operaciones sobre el proyecto ya copiado y configurado.
         diagnosticar_espacio_disco(self.logbox)
 
         libro_dir = os.path.join(PAQUETES_DIR, nombre)
@@ -2489,6 +2476,12 @@ window.addEventListener('resize', () => {
             
             # 3. Establecer el namespace en build.gradle
             set_gradle_namespace(self.logbox, package_name)
+            
+            # Llamar a la nueva función para asegurar que buildDir es dinámico
+            if not actualizar_buildgradle_con_rutadinamica(nombre, self.logbox):
+                messagebox.showerror("Error Crítico", "No se pudo actualizar dinámicamente el archivo build.gradle. La compilación probablemente fallará.")
+                self.set_progress("Error configurando build.gradle.", "red")
+                return
 
             # 4. Sobrescribir AndroidManifest con una plantilla limpia y válida
             # La llamada a corregir_android_manifest en generar_iconos ya se encarga de esto.
