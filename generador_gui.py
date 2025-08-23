@@ -1357,6 +1357,75 @@ def preparar_proyecto_capacitor(logbox):
     else:
         safe_log(logbox, "ADVERTENCIA: El directorio 'android' no existe. La creación de carpetas mipmap se omitirá. Ejecute 'npx cap add android' en el directorio del proyecto.")
 
+def instalar_arjs_y_limpiar(logbox):
+    project_dir = PROJECT_DIR
+    try:
+        safe_log(logbox, f"Cambiando al directorio del proyecto: {project_dir}")
+        
+        safe_log(logbox, "Limpiando cache npm...")
+        subprocess.run(["npm", "cache", "clean", "--force"], check=True, cwd=project_dir, shell=True)
+
+        node_modules_path = os.path.join(project_dir, "node_modules")
+        if os.path.exists(node_modules_path):
+            safe_log(logbox, "Eliminando carpeta node_modules para instalación limpia...")
+            shutil.rmtree(node_modules_path)
+        else:
+            safe_log(logbox, "No existe carpeta node_modules, se omite eliminación.")
+
+        safe_log(logbox, "Instalando @ar-js-org/ar.js versión 3.4.7...")
+        subprocess.run(["npm", "install", "@ar-js-org/ar.js@3.4.7", "--save"], check=True, cwd=project_dir, shell=True)
+
+        safe_log(logbox, "Instalación de AR.js completada correctamente.")
+        return True
+
+    except subprocess.CalledProcessError as e:
+        safe_log(logbox, f"ERROR en instalación de AR.js: {e}")
+        messagebox.showerror("Error de Dependencias", f"Falla en la instalación de AR.js: {e}")
+        return False
+    except Exception as e:
+        safe_log(logbox, f"ERROR inesperado durante instalación de AR.js: {e}")
+        messagebox.showerror("Error de Dependencias", f"Falla inesperada durante la instalación de AR.js: {e}")
+        return False
+
+def verificar_instalacion_arjs(logbox):
+    project_dir = PROJECT_DIR
+    try:
+        result = subprocess.run(
+            ["npm", "list", "@ar-js-org/ar.js", "--depth=0"],
+            capture_output=True,
+            text=True,
+            check=True,
+            cwd=project_dir,
+            shell=True
+        )
+        output = result.stdout
+        if "@ar-js-org/ar.js@3.4.7" in output:
+            safe_log(logbox, "✓ Verificación exitosa: AR.js versión 3.4.7 está instalada.")
+            return True
+        else:
+            safe_log(logbox, "AR.js no está instalado en la versión correcta. Se necesita v3.4.7.")
+            return False
+    except subprocess.CalledProcessError:
+        safe_log(logbox, "No se encontró AR.js instalado.")
+        return False
+    except Exception as e:
+        safe_log(logbox, f"ERROR verificando instalación de AR.js: {e}")
+        return False
+
+def instalar_o_actualizar_arjs_si_necesario(logbox):
+    """
+    Verifica si @ar-js-org/ar.js@3.4.7 está instalado.
+    Si no está, instala limpiando antes.
+    Retorna True si todo está OK, False si falla.
+    """
+    safe_log(logbox, "Verificando instalación de dependencias de AR.js...")
+    if verificar_instalacion_arjs(logbox):
+        return True
+    else:
+        safe_log(logbox, "La dependencia AR.js no está instalada o la versión es incorrecta. Iniciando instalación...")
+        return instalar_arjs_y_limpiar(logbox)
+
+
 # ---------------------- CLASE PRINCIPAL GUI ----------------------
 
 class GeneradorGUI:
@@ -2055,7 +2124,7 @@ class GeneradorGUI:
     <!-- Scripts requeridos para la nueva implementación de AR -->
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
-    <script src="https://raw.githack.com/AR-js-org/AR.js/master/three.js/build/ar-threex.js"></script>
+    <script src="https://cdn.jsdelivr.net/gh/AR-js-org/AR.js@3.4.7/three.js/build/ar-threex.js"></script>
 
     <!-- El script principal que contiene la lógica de AR -->
     <script src="js/frontend-ar.js"></script>
@@ -2103,182 +2172,172 @@ bpy.ops.export_scene.gltf(filepath=r'{destino}', export_format='GLB', export_app
         permisos de cámara y manejar la inicialización de AR.js.
         """
         frontend_ar_code = """
-// frontend-ar.js - Versión corregida para manejo de cámara y AR.js
+// frontend-ar.js - Versión corregida y estable para AR.js v3.4.7
 document.addEventListener('DOMContentLoaded', () => {
-    console.log("Entorno AR cargado. Verificando dispositivo y permisos...");
+  console.log("Entorno AR cargado. Verificando dispositivo y permisos...");
 
-    const isMobile = /Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-    if (!isMobile) {
-        console.warn("AR.js funciona mejor en dispositivos móviles.");
-        document.body.innerHTML = '<div style="text-align:center;padding:20px;"><h2>Esta función está optimizada para dispositivos móviles</h2><p>Por favor abre esta aplicación desde un teléfono o tablet.</p></div>';
-        return;
-    }
+  const isMobile = /Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+  if (!isMobile) {
+    document.body.innerHTML = '<div style="text-align:center;padding:20px;"><h2>Función optimizada para dispositivos móviles</h2><p>Por favor abre esta app en un teléfono o tablet.</p></div>';
+    return;
+  }
 
-    requestCameraPermission();
+  requestCameraPermission();
 });
 
 function requestCameraPermission() {
-    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-        navigator.mediaDevices.getUserMedia({ video: true })
-            .then(() => {
-                console.log("Permiso de cámara concedido por el usuario. Inicializando AR...");
-                initializeAR();
-            })
-            .catch(err => {
-                console.error("Permiso de cámara denegado:", err);
-                showError("Se requiere permiso de cámara para usar la Realidad Aumentada. Por favor, habilita el permiso en la configuración de la aplicación y reinicia.");
-            });
-    } else {
-        showError("Tu navegador no soporta el acceso a la cámara (getUserMedia).");
-    }
+  if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+    navigator.mediaDevices.getUserMedia({ video: true })
+      .then(() => {
+        console.log("Permiso de cámara concedido por el usuario. Inicializando AR...");
+        initializeAR();
+      })
+      .catch(err => {
+        console.error("Permiso de cámara denegado:", err);
+        showError("Se requiere permiso de cámara para usar la Realidad Aumentada. Por favor, habilita el permiso en la configuración y reinicia.");
+      });
+  } else {
+    showError("Tu navegador no soporta acceso a la cámara (getUserMedia).");
+  }
 }
 
 function initializeAR() {
-    const scene = new THREE.Scene();
-    const camera = new THREE.Camera();
-    scene.add(camera);
+  const scene = new THREE.Scene();
+  const camera = new THREE.Camera();
+  scene.add(camera);
 
-    const renderer = new THREE.WebGLRenderer({
-        antialias: true,
-        alpha: true
-    });
-    
-    renderer.setPixelRatio(window.devicePixelRatio);
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.domElement.style.position = 'fixed';
-    renderer.domElement.style.top = '0';
-    renderer.domElement.style.left = '0';
-    document.body.appendChild(renderer.domElement);
+  const renderer = new THREE.WebGLRenderer({
+    antialias: true,
+    alpha: true
+  });
+  renderer.setPixelRatio(window.devicePixelRatio);
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.domElement.style.position = 'fixed';
+  renderer.domElement.style.top = '0';
+  renderer.domElement.style.left = '0';
+  document.body.appendChild(renderer.domElement);
 
-    // Crear elemento video correctamente
-    const video = document.createElement('video');
-    video.setAttribute('autoplay', '');
-    video.setAttribute('playsinline', '');
-    video.setAttribute('muted', ''); // Silenciar para permitir autoplay en algunos navegadores
-    video.style.display = 'none';
-    
-    // Obtener stream de cámara
-    navigator.mediaDevices.getUserMedia({ 
-        video: { 
-            facingMode: 'environment',
-            width: { ideal: 1280 },
-            height: { ideal: 720 }
-        } 
-    })
-    .then(stream => {
-        video.srcObject = stream;
-        video.play();
-        
-        // CORRECCIÓN: Usar sourceObject en lugar de sourceUrl
-        const arToolkitSource = new THREEx.ArToolkitSource({
-            sourceType: 'video',
-            sourceObject: video  // <-- CORRECCIÓN CRÍTICA
-        });
-        
-        arToolkitSource.init(() => {
-            console.log("ARToolkitSource inicializado correctamente");
-            
-            const arToolkitContext = new THREEx.ArToolkitContext({
-                cameraParametersUrl: 'data/camera_para.dat',
-                detectionMode: 'mono',
-                maxDetectionRate: 30
-            });
-            
-            arToolkitContext.init(() => {
-                console.log("ARToolkitContext inicializado correctamente");
-                camera.projectionMatrix.copy(arToolkitContext.getProjectionMatrix());
-                
-                if (window.arContent && Array.isArray(window.arContent)) {
-                    window.arContent.forEach(content => {
-                        createMarker(content, scene, arToolkitContext);
-                    });
-                } else {
-                    console.error("No se encontró contenido AR. Verifica window.arContent");
-                }
-                
-                // Iniciar loop de renderizado
-                animate(arToolkitSource, arToolkitContext, renderer, scene, camera);
-            });
-        });
-    })
-    .catch(err => {
-        console.error("Error crítico al acceder a la cámara:", err);
-        showError("No se pudo acceder a la cámara del dispositivo. Verifica los permisos de la aplicación.");
+  const video = document.createElement('video');
+  video.setAttribute('autoplay', '');
+  video.setAttribute('playsinline', '');
+  video.setAttribute('muted', '');
+  video.style.display = 'none';
+
+  navigator.mediaDevices.getUserMedia({
+    video: {
+      facingMode: 'environment',
+      width: { ideal: 1280 },
+      height: { ideal: 720 }
+    }
+  })
+  .then(stream => {
+    video.srcObject = stream;
+    video.play();
+
+    // Aquí la corrección clave: usar sourceObject (AR.js v3.4.7 lo soporta)
+    const arToolkitSource = new THREEx.ArToolkitSource({
+      sourceType: 'video',
+      sourceObject: video
     });
+
+    arToolkitSource.init(() => {
+      console.log("ARToolkitSource inicializado correctamente");
+
+      const arToolkitContext = new THREEx.ArToolkitContext({
+        cameraParametersUrl: 'data/camera_para.dat',
+        detectionMode: 'mono',
+        maxDetectionRate: 30
+      });
+
+      arToolkitContext.init(() => {
+        console.log("ARToolkitContext inicializado correctamente");
+        camera.projectionMatrix.copy(arToolkitContext.getProjectionMatrix());
+
+        if (window.arContent && Array.isArray(window.arContent)) {
+          window.arContent.forEach(content => {
+            createMarker(content, scene, arToolkitContext);
+          });
+        } else {
+          console.error("No se encontró contenido AR. Verifica window.arContent");
+        }
+
+        animate(arToolkitSource, arToolkitContext, renderer, scene, camera);
+      });
+    });
+  })
+  .catch(err => {
+    console.error("Error crítico al acceder a la cámara:", err);
+    showError("No se pudo acceder a la cámara del dispositivo. Verifica los permisos.");
+  });
 }
 
 function createMarker(content, scene, arToolkitContext) {
-    console.log(`Creando marcador para: ${content.markerUrl}`);
-    
-    const markerRoot = new THREE.Group();
-    scene.add(markerRoot);
+  console.log(`Creando marcador para: ${content.markerUrl}`);
 
-    const markerControls = new THREEx.ArMarkerControls(
-        arToolkitContext,
-        markerRoot,
-        {
-            type: 'pattern',
-            patternUrl: content.markerUrl,
-            changeMatrixMode: 'cameraTransformMatrix'
-        }
-    );
+  const markerRoot = new THREE.Group();
+  scene.add(markerRoot);
 
-    const loader = new THREE.GLTFLoader();
-    loader.load(
-        content.modelUrl,
-        (gltf) => {
-            const model = gltf.scene;
-            console.log(`Modelo cargado: ${content.modelUrl}`);
-            
-            // Ajustar escala y posición
-            const box = new THREE.Box3().setFromObject(model);
-            const size = box.getSize(new THREE.Vector3());
-            const maxSize = Math.max(size.x, size.y, size.z);
-            const scale = 0.8 / maxSize;
-            model.scale.set(scale, scale, scale);
-            
-            // Centrar modelo
-            const center = box.getCenter(new THREE.Vector3());
-            model.position.sub(center);
-            
-            markerRoot.add(model);
-        },
-        (progress) => {
-            console.log(`Progreso carga modelo: ${progress.loaded / progress.total * 100}%`);
-        },
-        (error) => {
-            console.error(`Error cargando modelo ${content.modelUrl}:`, error);
-        }
-    );
+  const markerControls = new THREEx.ArMarkerControls(
+    arToolkitContext,
+    markerRoot,
+    {
+      type: 'pattern',
+      patternUrl: content.markerUrl,
+      changeMatrixMode: 'cameraTransformMatrix'
+    }
+  );
+
+  const loader = new THREE.GLTFLoader();
+  loader.load(
+    content.modelUrl,
+    (gltf) => {
+      const model = gltf.scene;
+
+      // Ajustar escala y posición del modelo
+      const box = new THREE.Box3().setFromObject(model);
+      const size = box.getSize(new THREE.Vector3());
+      const maxSize = Math.max(size.x, size.y, size.z);
+      const scale = 0.8 / maxSize;
+      model.scale.set(scale, scale, scale);
+
+      const center = box.getCenter(new THREE.Vector3());
+      model.position.sub(center);
+
+      markerRoot.add(model);
+    },
+    (progress) => {
+      console.log(`Progreso carga modelo: ${(progress.loaded / progress.total) * 100}%`);
+    },
+    (error) => {
+      console.error(`Error cargando modelo ${content.modelUrl}:`, error);
+    }
+  );
 }
 
 function animate(arToolkitSource, arToolkitContext, renderer, scene, camera) {
-    requestAnimationFrame(() => animate(arToolkitSource, arToolkitContext, renderer, scene, camera));
-    
-    if (arToolkitSource && arToolkitSource.ready) {
-        arToolkitContext.update(arToolkitSource.domElement);
-        renderer.render(scene, camera);
-    }
+  requestAnimationFrame(() => animate(arToolkitSource, arToolkitContext, renderer, scene, camera));
+
+  if (arToolkitSource && arToolkitSource.ready) {
+    arToolkitContext.update(arToolkitSource.domElement);
+    renderer.render(scene, camera);
+  }
 }
 
 function showError(message) {
-    document.body.innerHTML = `
-        <div style="position:fixed; top:0; left:0; width:100%; height:100%; background:white; color:red; display:flex; flex-direction:column; justify-content:center; align-items:center; text-align:center; padding:20px; box-sizing:border-box;">
-            <h2>Error de Cámara</h2>
-            <p>${message}</p>
-            <button onclick="location.reload()" style="padding:10px 20px; margin-top:20px; font-size:16px;">
-                Reintentar
-            </button>
-        </div>
-    `;
+  document.body.innerHTML = `
+    <div style="position:fixed;top:0;left:0;width:100%;height:100%;background:white;color:red;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;padding:20px;box-sizing:border-box;">
+      <h2>Error de Cámara</h2>
+      <p>${message}</p>
+      <button onclick="location.reload()" style="padding:10px 20px; margin-top:20px; font-size:16px;">Reintentar</button>
+    </div>
+  `;
 }
 
-// Manejar cambios de orientación
 window.addEventListener('resize', () => {
-    if (window.arToolkitSource && window.arToolkitSource.ready) {
-        window.arToolkitSource.onResizeElement();
-        window.arToolkitSource.copyElementSizeTo(renderer.domElement);
-    }
+  if (window.arToolkitSource && window.arToolkitSource.ready) {
+    window.arToolkitSource.onResizeElement();
+    window.arToolkitSource.copyElementSizeTo(renderer.domElement);
+  }
 });
 """
         src_path = os.path.join(GEN_DIR, "frontend-ar.js")
@@ -2379,6 +2438,12 @@ window.addEventListener('resize', () => {
         Coordina la preparación del proyecto Capacitor, la generación de íconos,
         la actualización de configuraciones de Android y la compilación de Gradle.
         """
+        # --- Verificación e instalación de dependencias ---
+        if not instalar_o_actualizar_arjs_si_necesario(self.logbox):
+            self.set_progress("Error de dependencias de AR.js.", "red")
+            messagebox.showerror("Error", "No se pudo instalar/verificar la dependencia de AR.js. Revisa el log.")
+            return
+
         nombre = limpiar_nombre(self.nombre_libro.get().strip())
         if not nombre:
             messagebox.showerror("Error", "El nombre del paquete está vacío.")
@@ -2575,4 +2640,5 @@ if __name__ == "__main__":
     root = Tk()
     app = GeneradorGUI(root)
     root.mainloop()
+
 
