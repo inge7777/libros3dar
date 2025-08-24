@@ -117,95 +117,18 @@ def preparar_rutas_java(package_name):
     return os.path.join(java_dir, "MainActivity.java")
 
 def crear_main_activity(logbox, package_name):
-    """
-    Genera un MainActivity.java robusto que maneja permisos de cámara y
-    establece un fondo de WebView transparente para la correcta visualización de la AR.
-    """
     ruta_main_activity = preparar_rutas_java(package_name)
-    
-    codigo_java = f"""package {package_name};
+    codigo_java_template = """package {package_name};
 
-import android.Manifest;
-import android.content.pm.PackageManager;
-import android.graphics.Color;
-import android.os.Bundle;
-import android.webkit.PermissionRequest;
-import android.webkit.WebChromeClient;
-import android.webkit.WebSettings;
-import android.widget.Toast;
-import androidx.core.app.ActivityCompat;
-import androidx.core.content.ContextCompat;
 import com.getcapacitor.BridgeActivity;
 
-public class MainActivity extends BridgeActivity {{
-    private static final int CAMERA_PERMISSION_REQUEST_CODE = 100;
-
-    @Override
-    public void onCreate(Bundle savedInstanceState) {{
-        super.onCreate(savedInstanceState);
-
-        // **CRÍTICO**: Hacer el fondo del WebView transparente para ver la cámara.
-        bridge.getWebView().setBackgroundColor(Color.TRANSPARENT);
-        
-        // Configuraciones adicionales de WebView para AR
-        WebSettings webSettings = bridge.getWebView().getSettings();
-        webSettings.setJavaScriptEnabled(true);
-        webSettings.setDomStorageEnabled(true);
-        webSettings.setMediaPlaybackRequiresUserGesture(false); // Permitir autoplay de video
-
-        // Solicitar permiso de cámara al iniciar la app.
-        requestCameraPermission();
-    }}
-
-    private void requestCameraPermission() {{
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {{
-            ActivityCompat.requestPermissions(
-                this,
-                new String[]{{Manifest.permission.CAMERA}},
-                CAMERA_PERMISSION_REQUEST_CODE
-            );
-        }} else {{
-            // Si el permiso ya está concedido, configurar el WebView.
-            setupWebView();
-        }}
-    }}
-
-    @Override
-    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {{
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-        if (requestCode == CAMERA_PERMISSION_REQUEST_CODE) {{
-            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {{
-                // Permiso concedido, configurar el WebView.
-                setupWebView();
-            }} else {{
-                // Permiso denegado, es esencial para la app.
-                Toast.makeText(this, "El permiso de cámara es necesario para la Realidad Aumentada.", Toast.LENGTH_LONG).show();
-                finish(); // Cerrar la app si el permiso es denegado.
-            }}
-        }}
-    }}
-
-    private void setupWebView() {{
-        // Este WebChromeClient es útil para otras solicitudes de permisos desde la web.
-        this.bridge.getWebView().setWebChromeClient(new WebChromeClient() {{
-            @Override
-            public void onPermissionRequest(final PermissionRequest request) {{
-                runOnUiThread(() -> {{
-                    if (request.getResources() != null && request.getResources().length > 0) {{
-                        request.grant(request.getResources());
-                    }} else {{
-                        request.deny();
-                    }}
-                }});
-            }}
-        }});
-    }}
-}}
+public class MainActivity extends BridgeActivity {{ }}
 """
+    codigo_java = codigo_java_template.format(package_name=package_name)
     try:
         with open(ruta_main_activity, "w", encoding="utf-8") as f:
             f.write(codigo_java)
-        safe_log(logbox, f"✓ MainActivity.java (con permisos y fondo transparente) generado en: {ruta_main_activity}")
+        safe_log(logbox, f"✓ MainActivity.java (versión mínima) generado en: {ruta_main_activity}")
     except Exception as e:
         safe_log(logbox, f"✗ ERROR CRÍTICO generando MainActivity.java: {e}")
         raise
@@ -473,6 +396,7 @@ def corregir_android_manifest(logbox, package_name):
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
 
@@ -499,7 +423,7 @@ def corregir_android_manifest(logbox, package_name):
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|locale|smallestScreenSize|screenLayout|uiMode"
             android:exported="true"
             android:launchMode="singleTask"
-            android:theme="@style/AppTheme.NoActionBarLaunch">
+            android:theme="@style/Theme.SplashScreen">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -525,6 +449,138 @@ def corregir_android_manifest(logbox, package_name):
     except Exception as e:
         safe_log(logbox, f"✗ ERROR escribiendo AndroidManifest.xml: {e}")
         raise
+
+
+def generar_root_build_gradle(logbox):
+    """
+    Genera un archivo build.gradle de raíz para el proyecto Android,
+    estableciendo versiones consistentes y modernas para el Android Gradle Plugin y otras dependencias.
+    """
+    root_gradle_path = os.path.join(ANDROID_DIR, "build.gradle")
+    
+    # Plantilla para el build.gradle raíz.
+    # Especifica versiones modernas y compatibles de AGP y Kotlin.
+    root_gradle_template = """
+// Top-level build file where you can add configuration options common to all sub-projects/modules.
+buildscript {
+    ext {
+        androidxAppCompatVersion = '1.6.1'
+        androidxCoreVersion = '1.12.0'
+        androidxJunitVersion = '1.1.5'
+        androidxEspressoCoreVersion = '3.5.1'
+        androidxWebkitVersion = '1.10.0'
+        junitVersion = '4.13.2'
+        // Versión del Android Gradle Plugin
+        agpVersion = '8.2.1' 
+    }
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath "com.android.tools.build:gradle:$agpVersion"
+    }
+}
+
+allprojects {
+    repositories {
+        google()
+        mavenCentral()
+    }
+}
+
+task clean(type: Delete) {
+    delete rootProject.buildDir
+}
+"""
+    
+    try:
+        with open(root_gradle_path, 'w', encoding='utf-8') as f:
+            f.write(root_gradle_template)
+        safe_log(logbox, f"✓ build.gradle raíz generado exitosamente en: {root_gradle_path}")
+        return True
+    except Exception as e:
+        safe_log(logbox, f"✗ ERROR CRÍTICO al generar el build.gradle raíz: {e}")
+        return False
+
+def generar_build_gradle_completo(logbox, package_name):
+    """
+    Genera un archivo build.gradle completo y robusto para el módulo :app,
+    asegurando que todas las dependencias, incluido el plugin de cámara, estén presentes.
+    """
+    gradle_file_path = os.path.join(ANDROID_DIR, "app", "build.gradle")
+    
+    # Plantilla para el build.gradle. Se usa .format() para insertar el package_name.
+    gradle_template = """
+apply plugin: 'com.android.application'
+
+android {{
+    namespace "{package_name}"
+    compileSdkVersion 34
+    defaultConfig {{
+        applicationId "{package_name}"
+        minSdkVersion 24
+        targetSdkVersion 34
+        versionCode 1
+        versionName "1.0"
+        testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+    }}
+    buildTypes {{
+        release {{
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }}
+    }}
+    compileOptions {{
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }}
+    packagingOptions {{
+        exclude 'META-INF/DEPENDENCIES'
+        exclude 'META-INF/LICENSE'
+        exclude 'META-INF/LICENSE.txt'
+        exclude 'META-INF/license.txt'
+        exclude 'META-INF/NOTICE'
+        exclude 'META-INF/NOTICE.txt'
+        exclude 'META-INF/notice.txt'
+        exclude 'META-INF/ASL2.0'
+        exclude("META-INF/*.kotlin_module")
+    }}
+}}
+
+repositories {{
+    google()
+    mavenCentral()
+}}
+
+dependencies {{
+    implementation fileTree(dir: 'libs', include: ['*.jar'])
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'androidx.core:core-ktx:1.12.0'
+    implementation project(':capacitor-android')
+    testImplementation 'junit:junit:4.13.2'
+    androidTestImplementation 'androidx.test.ext:junit:1.1.5'
+    androidTestImplementation 'androidx.test.espresso:espresso-core:3.5.1'
+    implementation 'androidx.webkit:webkit:1.10.0'
+    
+    // Dependencia explícita para el plugin de cámara de Capacitor
+    implementation project(':capacitor-camera')
+}}
+"""
+    
+    try:
+        # Formatear la plantilla con el nombre del paquete
+        gradle_content = gradle_template.format(package_name=package_name)
+        
+        # Escribir el contenido al archivo, sobrescribiendo cualquier versión anterior
+        with open(gradle_file_path, 'w', encoding='utf-8') as f:
+            f.write(gradle_content)
+            
+        safe_log(logbox, f"✓ build.gradle completo generado exitosamente en: {gradle_file_path}")
+        return True
+    except Exception as e:
+        safe_log(logbox, f"✗ ERROR CRÍTICO al generar build.gradle: {e}")
+        return False
 
 
 def update_strings_xml(logbox, nombre: str):
@@ -1408,6 +1464,72 @@ def verificar_instalacion_arjs(logbox):
         safe_log(logbox, f"ERROR verificando instalación de AR.js: {e}")
         return False
 
+
+def crear_styles_xml(logbox):
+    """Crea el archivo styles.xml con el tema SplashScreen necesario"""
+    values_dir = os.path.join(ANDROID_DIR, "app", "src", "main", "res", "values")
+    os.makedirs(values_dir, exist_ok=True)
+    
+    styles_content = """<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Base application theme. -->
+    <style name="AppTheme" parent="Theme.AppCompat.Light.DarkActionBar">
+        <item name="colorPrimary">@color/colorPrimary</item>
+        <item name="colorPrimaryDark">@color/colorPrimaryDark</item>
+        <item name="colorAccent">@color/colorAccent</item>
+    </style>
+
+    <!-- Theme para SplashScreen -->
+    <style name="Theme.SplashScreen" parent="Theme.AppCompat.NoActionBar">
+        <item name="android:windowBackground">@drawable/splash_background</item>
+        <item name="android:windowFullscreen">true</item>
+        <item name="android:windowContentOverlay">@null</item>
+    </style>
+</resources>"""
+    
+    styles_path = os.path.join(values_dir, "styles.xml")
+    with open(styles_path, "w", encoding="utf-8") as f:
+        f.write(styles_content)
+    safe_log(logbox, f"✓ styles.xml creado en: {styles_path}")
+
+def crear_colors_xml(logbox):
+    """Crea el archivo colors.xml con colores básicos"""
+    values_dir = os.path.join(ANDROID_DIR, "app", "src", "main", "res", "values")
+    os.makedirs(values_dir, exist_ok=True)
+    
+    colors_content = """<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="colorPrimary">#3F51B5</color>
+    <color name="colorPrimaryDark">#303F9F</color>
+    <color name="colorAccent">#FF4081</color>
+    <color name="splash_background">#FFFFFF</color>
+</resources>"""
+    
+    colors_path = os.path.join(values_dir, "colors.xml")
+    with open(colors_path, "w", encoding="utf-8") as f:
+        f.write(colors_content)
+    safe_log(logbox, f"✓ colors.xml creado en: {colors_path}")
+
+def crear_splash_background(logbox):
+    """Crea el drawable para el fondo del SplashScreen"""
+    drawable_dir = os.path.join(ANDROID_DIR, "app", "src", "main", "res", "drawable")
+    os.makedirs(drawable_dir, exist_ok=True)
+    
+    splash_content = """<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@color/splash_background" />
+    <item>
+        <bitmap
+            android:gravity="center"
+            android:src="@mipmap/ic_launcher" />
+    </item>
+</layer-list>"""
+    
+    splash_path = os.path.join(drawable_dir, "splash_background.xml")
+    with open(splash_path, "w", encoding="utf-8") as f:
+        f.write(splash_content)
+    safe_log(logbox, f"✓ splash_background.xml creado en: {splash_path}")
+
 def instalar_o_actualizar_arjs_si_necesario(logbox):
     """
     Verifica si @ar-js-org/ar.js@3.4.7 está instalado.
@@ -1420,6 +1542,57 @@ def instalar_o_actualizar_arjs_si_necesario(logbox):
     else:
         safe_log(logbox, "La dependencia AR.js no está instalada o la versión es incorrecta. Iniciando instalación...")
         return instalar_arjs_y_limpiar(logbox)
+
+
+def limpiar_y_regenerar_android(logbox):
+    """
+    Elimina por completo el directorio 'android' y lo regenera con 'npx cap add android'.
+    Esta es una medida drástica para asegurar que no queden configuraciones cacheadas.
+    """
+    safe_log(logbox, "--- INICIANDO LIMPIEZA Y REGENERACIÓN AGRESIVA DEL PROYECTO ANDROID ---")
+    if os.path.exists(ANDROID_DIR):
+        safe_log(logbox, f"Eliminando el directorio Android existente en: {ANDROID_DIR}")
+        try:
+            shutil.rmtree(ANDROID_DIR)
+            safe_log(logbox, "✓ Directorio Android eliminado exitosamente.")
+        except Exception as e:
+            safe_log(logbox, f"✗ ERROR CRÍTICO al eliminar el directorio Android: {e}")
+            messagebox.showerror(
+                "Error de Limpieza",
+                f"No se pudo eliminar la carpeta 'android'.\n"
+                f"Cierra Android Studio o cualquier explorador de archivos que la esté usando y reintenta.\n\nError: {e}"
+            )
+            return False  # Detener el proceso si la eliminación falla
+
+    safe_log(logbox, "Regenerando el proyecto Android con 'npx cap add android'...")
+    try:
+        # Usar subprocess.run para capturar la salida y manejar errores
+        result = subprocess.run(
+            ["npx", "cap", "add", "android"],
+            cwd=PROJECT_DIR,
+            check=True,
+            shell=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8"
+        )
+        safe_log(logbox, "✓ Proyecto Android regenerado exitosamente.")
+        safe_log(logbox, f"Salida de Capacitor:\n{result.stdout}")
+        return True
+    except subprocess.CalledProcessError as e:
+        safe_log(logbox, f"✗ ERROR CRÍTICO: 'npx cap add android' falló.")
+        safe_log(logbox, f"  Código de Salida: {e.returncode}")
+        safe_log(logbox, f"  Salida de Error (stderr):\n{e.stderr}")
+        safe_log(logbox, f"  Salida Estándar (stdout):\n{e.stdout}")
+        messagebox.showerror(
+            "Error de Capacitor",
+            f"No se pudo regenerar el proyecto Android.\n\n"
+            f"Error: {e.stderr}"
+        )
+        return False
+    except Exception as e:
+        safe_log(logbox, f"✗ Ocurrió un error inesperado al regenerar el proyecto Android: {e}")
+        return False
 
 
 # ---------------------- CLASE PRINCIPAL GUI ----------------------
@@ -1744,23 +1917,36 @@ class GeneradorGUI:
             with open(claves_file, "w", encoding="utf-8") as f: f.write("\n".join(self.claves))
             safe_log(self.logbox, f"✓ {cantidad} claves generadas.")
 
-            # 3. Generar y guardar los 3 archivos HTML
+            # 3. Generar y guardar los 4 archivos HTML (incluyendo la nueva vista web)
             activation_html = self.generate_activation_html(nombre, backend_url)
             main_menu_html = self.generate_main_menu_html(nombre)
             ar_viewer_html = self.generate_ar_viewer_html(nombre, ar_content_list)
+            web_ar_viewer_html = self.generate_web_ar_viewer_html(nombre, ar_content_list)
 
-            for filename, content in [("index.html", activation_html), ("main-menu.html", main_menu_html), ("ar-viewer.html", ar_viewer_html)]:
+            for filename, content in [
+                ("index.html", activation_html),
+                ("main-menu.html", main_menu_html),
+                ("ar-viewer.html", ar_viewer_html),
+                ("web-ar-viewer.html", web_ar_viewer_html)
+            ]:
                 with open(os.path.join(WWW_DIR, filename), "w", encoding="utf-8") as f:
                     f.write(content)
                 with open(os.path.join(paquete_dir, filename), "w", encoding="utf-8") as f:
                     f.write(content)
                 safe_log(self.logbox, f"✓ Archivo HTML generado y guardado: {filename}")
 
+            # Crear ambos archivos frontend-ar
+            self.crear_y_copiar_frontend_ar(self.logbox)
+            self.crear_y_copiar_web_frontend_ar(self.logbox)
+
             # 4. Actualizar config de Capacitor
+            package_name = get_package_name(nombre)
             config_path = os.path.join(PROJECT_DIR, "capacitor.config.json")
             capacitor_config = {
+                "appId": package_name,
                 "appName": self.nombre_libro.get().strip(),
                 "webDir": "www",
+                "backgroundColor": "#00000000",
                 "bundledWebRuntime": False,
                 "android": {
                     "allowMixedContent": True,
@@ -1769,7 +1955,7 @@ class GeneradorGUI:
                 },
                 "server": {
                     "hostname": "localhost",
-                    "androidScheme": "https",
+                    "androidScheme": "http",
                     "cleartext": True
                 },
                 "plugins": {
@@ -2025,66 +2211,78 @@ class GeneradorGUI:
     def generate_main_menu_html(self, nombre):
         explicacion_btn_html = f'<button class="menu-btn explanation-btn" onclick="openExplanation()">💡 Explicación</button>' if self.explicacion_var.get().strip() else ''
         open_explanation_js = f"function openExplanation() {{ window.open('{self.explicacion_var.get().strip()}', '_blank'); }}" if self.explicacion_var.get().strip() else 'function openExplanation() {}'
+
+        # Nuevo botón para vista previa web
+        web_ar_btn = '<button class="menu-btn web-ar-btn" onclick="startWebAR()">🌐 Vista Previa AR (Web)</button>'
+
         return f"""
 <!DOCTYPE html>
 <html lang="es">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{nombre} - Menú Principal</title>
-    <script src="capacitor.js"></script>
-    <style>
-        body {{ font-family: Arial, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }}
-        .menu-container {{ background: white; padding: 2rem; border-radius: 15px; box-shadow: 0 10px 30px rgba(0,0,0,0.2); text-align: center; max-width: 400px; width: 90%; overflow-y: auto; max-height: 90vh;}}
-        .logo {{ width: 100px; height: 100px; margin: 0 auto 1rem; background: url('portada.jpg') center/cover; border-radius: 50%; }}
-        .menu-btn {{ width: 100%; padding: 1.2rem; margin: 0.8rem 0; border: none; border-radius: 8px; font-size: 1.1rem; cursor: pointer; transition: background 0.3s, transform 0.2s; }}
-        .menu-btn:hover {{ transform: translateY(-2px); }}
-        .video-btn {{ background: #2196F3; color: white; }}
-        .explanation-btn {{ background: #FF9800; color: white; }}
-        .ar-btn {{ background: #4CAF50; color: white; font-weight: bold; }}
-        .ar-btn:hover {{ background: #45a049; }}
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{nombre} - Menú Principal</title>
+<script src="capacitor.js"></script>
+<style>
+body {{ font-family: Arial, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; }}
+.menu-container {{ background: white; padding: 2rem; border-radius: 15px; box-shadow: 0 10px 30px rgba(0,0,0,0.2); text-align: center; max-width: 400px; width: 90%; overflow-y: auto; max-height: 90vh;}}
+.logo {{ width: 100px; height: 100px; margin: 0 auto 1rem; background: url('portada.jpg') center/cover; border-radius: 50%; }}
+.menu-btn {{ width: 100%; padding: 1.2rem; margin: 0.8rem 0; border: none; border-radius: 8px; font-size: 1.1rem; cursor: pointer; transition: background 0.3s, transform 0.2s; }}
+.menu-btn:hover {{ transform: translateY(-2px); }}
+.video-btn {{ background: #2196F3; color: white; }}
+.explanation-btn {{ background: #FF9800; color: white; }}
+.ar-btn {{ background: #4CAF50; color: white; font-weight: bold; }}
+.web-ar-btn {{ background: #9C27B0; color: white; font-weight: bold; }}
+.ar-btn:hover {{ background: #45a049; }}
+.web-ar-btn:hover {{ background: #7B1FA2; }}
+</style>
 </head>
 <body>
-    <div class="menu-container">
-        <div class="logo"></div>
-        <h1 style="color: #333;">{nombre}</h1>
-        <p style="margin-bottom: 2rem; color: #666;">Selecciona una opción</p>
-        <button class="menu-btn ar-btn" onclick="startAR()">📱 Iniciar Realidad Aumentada</button>
-        <button class="menu-btn video-btn" onclick="openVideo()">📢 Ver Video Promocional</button>
-        {explicacion_btn_html}
-    </div>
-    <script>
-        function openVideo() {{ window.open('{self.propaganda_var.get().strip()}', '_blank'); }}
-        {open_explanation_js}
-        
-        async function startAR() {{
-            if (localStorage.getItem('app_activated') !== 'true') {{
-                alert('Sesión expirada. Redirigiendo a activación...');
-                window.location.href = 'index.html';
-                return;
-            }}
+<div class="menu-container">
+<div class="logo"></div>
+<h1 style="color: #333;">{nombre}</h1>
+<p style="margin-bottom: 2rem; color: #666;">Selecciona una opción</p>
+{web_ar_btn}
+<button class="menu-btn ar-btn" onclick="startAR()">📱 Iniciar Realidad Aumentada (APK)</button>
+<button class="menu-btn video-btn" onclick="openVideo()">📢 Ver Video Promocional</button>
+{explicacion_btn_html}
+</div>
+<script>
+function openVideo() {{ window.open('{self.propaganda_var.get().strip()}', '_blank'); }}
+{open_explanation_js}
 
-            if (typeof Capacitor !== 'undefined' && Capacitor.isNativePlatform() && Capacitor.Plugins && Capacitor.Plugins.Camera) {{
-                try {{
-                    const status = await Capacitor.Plugins.Camera.requestPermissions();
-                    if (status.camera === 'granted') {{
-                        console.log("Permiso de cámara concedido. Iniciando AR...");
-                        window.location.href = 'ar-viewer.html';
-                    }} else {{
-                        alert('El permiso para usar la cámara es necesario para la Realidad Aumentada.');
-                    }}
-                }} catch (e) {{
-                    console.error("Error pidiendo permisos de cámara con Capacitor, intentando de todas formas.", e);
-                    window.location.href = 'ar-viewer.html';
-                }}
-            }} else {{
-                // Fallback para web o si el plugin no está disponible
-                console.log("Usando WebRTC para navegador, o Capacitor no está listo.");
-                window.location.href = 'ar-viewer.html';
-            }}
-        }}
-    </script>
+function startWebAR() {{
+// Redirigir a la vista web de AR
+window.location.href = 'web-ar-viewer.html';
+}}
+
+async function startAR() {{
+if (localStorage.getItem('app_activated') !== 'true') {{
+alert('Sesión expirada. Redirigiendo a activación...');
+window.location.href = 'index.html';
+return;
+}}
+
+if (typeof Capacitor !== 'undefined' && Capacitor.isNativePlatform() && Capacitor.Plugins && Capacitor.Plugins.Camera) {{
+try {{
+const status = await Capacitor.Plugins.Camera.requestPermissions();
+if (status.camera === 'granted') {{
+console.log("Permiso de cámara concedido. Iniciando AR...");
+window.location.href = 'ar-viewer.html';
+}} else {{
+alert('El permiso para usar la cámara es necesario para la Realidad Aumentada.');
+}}
+}} catch (e) {{
+console.error("Error pidiendo permisos de cámara con Capacitor, intentando de todas formas.", e);
+window.location.href = 'ar-viewer.html';
+}}
+}} else {{
+// Fallback para web o si el plugin no está disponible
+console.log("Usando WebRTC para navegador, o Capacitor no está listo.");
+window.location.href = 'ar-viewer.html';
+}}
+}}
+</script>
 </body>
 </html>"""
 
@@ -2127,6 +2325,64 @@ class GeneradorGUI:
 </body>
 </html>"""
 
+    def generate_web_ar_viewer_html(self, nombre, ar_content_list):
+        ar_content_json = json.dumps(ar_content_list)
+
+        return f"""
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Vista Previa AR - {nombre}</title>
+<style>
+html, body {{ margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background-color: black; }}
+canvas {{ display: block; }}
+#backBtn, #infoBtn {{
+position: fixed; z-index: 999;
+font-size: 18px; padding: 8px 12px; background: rgba(0,0,0,0.6);
+color: white; border: none; border-radius: 5px; cursor: pointer;
+}}
+#backBtn {{ top: 10px; left: 10px; }}
+#infoBtn {{ top: 10px; right: 10px; }}
+#infoPanel {{
+position: fixed; top: 60px; right: 10px; width: 300px;
+background: rgba(0,0,0,0.8); color: white; padding: 15px;
+border-radius: 10px; display: none; z-index: 998;
+}}
+.marker-info {{
+margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid #555;
+}}
+.marker-info:last-child {{ border-bottom: none; margin-bottom: 0; }}
+</style>
+</head>
+<body>
+<button id="backBtn" onclick="window.location.href='main-menu.html'">Volver al Menú</button>
+<button id="infoBtn" onclick="toggleInfo()">ℹ️ Info</button>
+
+<div id="infoPanel">
+<h3>Instrucciones de uso:</h3>
+<ol>
+<li>Permite acceso a la cámara cuando se solicite</li>
+<li>Imprime los marcadores disponibles</li>
+<li>Muestra cada marcador frente a la cámara</li>
+<li>El modelo 3D aparecerá sobre el marcador</li>
+</ol>
+<h3>Marcadores disponibles:</h3>
+<div id="markersList"></div>
+</div>
+
+<script>
+window.arContent = {ar_content_json};
+</script>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/AR-js-org/AR.js@3.4.7/three.js/build/ar-threex.js"></script>
+<script src="js/web-frontend-ar.js"></script>
+</body>
+</html>"""
+
     def convertir_con_blender(self, origen, destino):
         """
         Convierte archivos 3D (ej. FBX) a formato GLB usando Blender.
@@ -2164,177 +2420,101 @@ bpy.ops.export_scene.gltf(filepath=r'{destino}', export_format='GLB', export_app
 
     def crear_y_copiar_frontend_ar(self, logbox):
         """
-        Crea el archivo frontend-ar.js con una lógica robusta para solicitar
-        permisos de cámara y manejar la inicialización de AR.js.
+        Crea el archivo frontend-ar.js con una lógica simplificada y robusta que
+        delega el manejo de la cámara directamente a AR.js.
         """
         frontend_ar_code = """
-// frontend-ar.js - Versión corregida y estable para AR.js v3.4.7
+// frontend-ar.js - Versión simplificada con sourceType: 'webcam'
 document.addEventListener('DOMContentLoaded', () => {
-  console.log("Entorno AR cargado. Verificando dispositivo y permisos...");
-
-  const isMobile = /Android|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-  if (!isMobile) {
-    document.body.innerHTML = '<div style="text-align:center;padding:20px;"><h2>Función optimizada para dispositivos móviles</h2><p>Por favor abre esta app en un teléfono o tablet.</p></div>';
-    return;
-  }
-
-  requestCameraPermission();
+    console.log("Entorno AR cargado. Inicializando AR.js...");
+    initializeAR();
 });
 
-function requestCameraPermission() {
-  if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-    navigator.mediaDevices.getUserMedia({ video: true })
-      .then(() => {
-        console.log("Permiso de cámara concedido por el usuario. Inicializando AR...");
-        initializeAR();
-      })
-      .catch(err => {
-        console.error("Permiso de cámara denegado:", err);
-        showError("Se requiere permiso de cámara para usar la Realidad Aumentada. Por favor, habilita el permiso en la configuración y reinicia.");
-      });
-  } else {
-    showError("Tu navegador no soporta acceso a la cámara (getUserMedia).");
-  }
-}
-
 function initializeAR() {
-  const scene = new THREE.Scene();
-  const camera = new THREE.Camera();
-  scene.add(camera);
+    const scene = new THREE.Scene();
+    const camera = new THREE.Camera();
+    scene.add(camera);
 
-  const renderer = new THREE.WebGLRenderer({
-    antialias: true,
-    alpha: true
-  });
-  renderer.setPixelRatio(window.devicePixelRatio);
-  renderer.setSize(window.innerWidth, window.innerHeight);
-  renderer.domElement.style.position = 'fixed';
-  renderer.domElement.style.top = '0';
-  renderer.domElement.style.left = '0';
-  document.body.appendChild(renderer.domElement);
+    const renderer = new THREE.WebGLRenderer({
+        antialias: true,
+        alpha: true
+    });
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.domElement.style.position = 'fixed';
+    renderer.domElement.style.top = '0';
+    renderer.domElement.style.left = '0';
+    document.body.appendChild(renderer.domElement);
 
-  const video = document.createElement('video');
-  video.setAttribute('autoplay', '');
-  video.setAttribute('playsinline', '');
-  video.setAttribute('muted', '');
-  video.style.display = 'none';
-
-  navigator.mediaDevices.getUserMedia({
-    video: {
-      facingMode: 'environment',
-      width: { ideal: 1280 },
-      height: { ideal: 720 }
-    }
-  })
-  .then(stream => {
-    video.srcObject = stream;
-    video.play();
-
-    // Aquí la corrección clave: usar sourceObject (AR.js v3.4.7 lo soporta)
+    // Inicializar AR.js delegando el control de la cámara
     const arToolkitSource = new THREEx.ArToolkitSource({
-      sourceType: 'video',
-      sourceObject: video
+        sourceType: 'webcam',
+        sourceWidth: window.innerWidth,
+        sourceHeight: window.innerHeight,
     });
 
     arToolkitSource.init(() => {
-      console.log("ARToolkitSource inicializado correctamente");
+        // Redimensionar el video para que ocupe toda la pantalla
+        arToolkitSource.domElement.style.position = 'fixed';
+        arToolkitSource.domElement.style.top = '0';
+        arToolkitSource.domElement.style.left = '0';
+        arToolkitSource.domElement.style.zIndex = '-1';
+        arToolkitSource.onResizeElement();
+        arToolkitSource.copyElementSizeTo(renderer.domElement);
+        
+        console.log("ARToolkitSource inicializado correctamente.");
 
-      const arToolkitContext = new THREEx.ArToolkitContext({
-        cameraParametersUrl: 'data/camera_para.dat',
-        detectionMode: 'mono',
-        maxDetectionRate: 30
-      });
+        const arToolkitContext = new THREEx.ArToolkitContext({
+            cameraParametersUrl: 'data/camera_para.dat',
+            detectionMode: 'mono',
+            maxDetectionRate: 30
+        });
 
-      arToolkitContext.init(() => {
-        console.log("ARToolkitContext inicializado correctamente");
-        camera.projectionMatrix.copy(arToolkitContext.getProjectionMatrix());
+        arToolkitContext.init(() => {
+            console.log("ARToolkitContext inicializado correctamente.");
+            camera.projectionMatrix.copy(arToolkitContext.getProjectionMatrix());
 
-        if (window.arContent && Array.isArray(window.arContent)) {
-          window.arContent.forEach(content => {
-            createMarker(content, scene, arToolkitContext);
-          });
-        } else {
-          console.error("No se encontró contenido AR. Verifica window.arContent");
-        }
-
-        animate(arToolkitSource, arToolkitContext, renderer, scene, camera);
-      });
+            if (window.arContent && Array.isArray(window.arContent)) {
+                window.arContent.forEach(content => {
+                    createMarker(content, scene, arToolkitContext);
+                });
+            } else {
+                console.error("No se encontró contenido AR. Verifica window.arContent");
+            }
+            animate();
+        });
     });
-  })
-  .catch(err => {
-    console.error("Error crítico al acceder a la cámara:", err);
-    showError("No se pudo acceder a la cámara del dispositivo. Verifica los permisos.");
-  });
-}
 
-function createMarker(content, scene, arToolkitContext) {
-  console.log(`Creando marcador para: ${content.markerUrl}`);
-
-  const markerRoot = new THREE.Group();
-  scene.add(markerRoot);
-
-  const markerControls = new THREEx.ArMarkerControls(
-    arToolkitContext,
-    markerRoot,
-    {
-      type: 'pattern',
-      patternUrl: content.markerUrl,
-      changeMatrixMode: 'cameraTransformMatrix'
+    function animate() {
+        requestAnimationFrame(animate);
+        if (arToolkitSource.ready === false) return;
+        arToolkitContext.update(arToolkitSource.domElement);
+        renderer.render(scene, camera);
     }
-  );
 
-  const loader = new THREE.GLTFLoader();
-  loader.load(
-    content.modelUrl,
-    (gltf) => {
-      const model = gltf.scene;
+    function createMarker(content, scene, arToolkitContext) {
+        const markerRoot = new THREE.Group();
+        scene.add(markerRoot);
 
-      // Ajustar escala y posición del modelo
-      const box = new THREE.Box3().setFromObject(model);
-      const size = box.getSize(new THREE.Vector3());
-      const maxSize = Math.max(size.x, size.y, size.z);
-      const scale = 0.8 / maxSize;
-      model.scale.set(scale, scale, scale);
+        new THREEx.ArMarkerControls(arToolkitContext, markerRoot, {
+            type: 'pattern',
+            patternUrl: content.markerUrl,
+            changeMatrixMode: 'cameraTransformMatrix'
+        });
 
-      const center = box.getCenter(new THREE.Vector3());
-      model.position.sub(center);
-
-      markerRoot.add(model);
-    },
-    (progress) => {
-      console.log(`Progreso carga modelo: ${(progress.loaded / progress.total) * 100}%`);
-    },
-    (error) => {
-      console.error(`Error cargando modelo ${content.modelUrl}:`, error);
+        const loader = new THREE.GLTFLoader();
+        loader.load(content.modelUrl, (gltf) => {
+            const model = gltf.scene;
+            const box = new THREE.Box3().setFromObject(model);
+            const size = box.getSize(new THREE.Vector3());
+            const scale = 0.8 / Math.max(size.x, size.y, size.z);
+            model.scale.set(scale, scale, scale);
+            const center = box.getCenter(new THREE.Vector3());
+            model.position.sub(center);
+            markerRoot.add(model);
+        });
     }
-  );
 }
-
-function animate(arToolkitSource, arToolkitContext, renderer, scene, camera) {
-  requestAnimationFrame(() => animate(arToolkitSource, arToolkitContext, renderer, scene, camera));
-
-  if (arToolkitSource && arToolkitSource.ready) {
-    arToolkitContext.update(arToolkitSource.domElement);
-    renderer.render(scene, camera);
-  }
-}
-
-function showError(message) {
-  document.body.innerHTML = `
-    <div style="position:fixed;top:0;left:0;width:100%;height:100%;background:white;color:red;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;padding:20px;box-sizing:border-box;">
-      <h2>Error de Cámara</h2>
-      <p>${message}</p>
-      <button onclick="location.reload()" style="padding:10px 20px; margin-top:20px; font-size:16px;">Reintentar</button>
-    </div>
-  `;
-}
-
-window.addEventListener('resize', () => {
-  if (window.arToolkitSource && window.arToolkitSource.ready) {
-    window.arToolkitSource.onResizeElement();
-    window.arToolkitSource.copyElementSizeTo(renderer.domElement);
-  }
-});
 """
         src_path = os.path.join(GEN_DIR, "frontend-ar.js")
         with open(src_path, "w", encoding="utf-8") as f:
@@ -2343,7 +2523,128 @@ window.addEventListener('resize', () => {
         destino_js_dir = os.path.join(WWW_DIR, "js")
         os.makedirs(destino_js_dir, exist_ok=True)
         shutil.copy2(src_path, destino_js_dir)
-        safe_log(self.logbox, f"✓ frontend-ar.js (versión robusta con permisos) creado y copiado a {destino_js_dir}")
+        safe_log(self.logbox, f"✓ frontend-ar.js (versión simplificada) creado y copiado a {destino_js_dir}")
+
+    def crear_y_copiar_web_frontend_ar(self, logbox):
+        web_frontend_ar_code = """
+// web-frontend-ar.js - Versión para vista web previa
+document.addEventListener('DOMContentLoaded', () => {
+console.log("Vista Web AR cargada. Inicializando AR.js...");
+initializeWebAR();
+populateMarkersList();
+});
+
+function populateMarkersList() {
+const markersList = document.getElementById('markersList');
+if (!markersList || !window.arContent) return;
+
+markersList.innerHTML = '';
+window.arContent.forEach((content, index) => {
+const markerInfo = document.createElement('div');
+markerInfo.className = 'marker-info';
+markerInfo.innerHTML = `
+<strong>Marcador ${index + 1}:</strong><br>
+Modelo: ${content.modelUrl.split('/').pop()}
+`;
+markersList.appendChild(markerInfo);
+});
+}
+
+function toggleInfo() {
+const infoPanel = document.getElementById('infoPanel');
+infoPanel.style.display = infoPanel.style.display === 'none' ? 'block' : 'none';
+}
+
+function initializeWebAR() {
+const scene = new THREE.Scene();
+const camera = new THREE.Camera();
+scene.add(camera);
+
+const renderer = new THREE.WebGLRenderer({
+antialias: true,
+alpha: true
+});
+renderer.setPixelRatio(window.devicePixelRatio);
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.domElement.style.position = 'fixed';
+renderer.domElement.style.top = '0';
+renderer.domElement.style.left = '0';
+document.body.appendChild(renderer.domElement);
+
+// Inicializar AR.js para web
+const arToolkitSource = new THREEx.ArToolkitSource({
+sourceType: 'webcam',
+sourceWidth: window.innerWidth,
+sourceHeight: window.innerHeight,
+});
+
+arToolkitSource.init(() => {
+console.log("ARToolkitSource inicializado correctamente para web.");
+
+const arToolkitContext = new THREEx.ArToolkitContext({
+cameraParametersUrl: 'data/camera_para.dat',
+detectionMode: 'mono',
+maxDetectionRate: 30
+});
+
+arToolkitContext.init(() => {
+console.log("ARToolkitContext inicializado correctamente para web.");
+camera.projectionMatrix.copy(arToolkitContext.getProjectionMatrix());
+
+if (window.arContent && Array.isArray(window.arContent)) {
+window.arContent.forEach(content => {
+createMarker(content, scene, arToolkitContext);
+});
+} else {
+console.error("No se encontró contenido AR. Verifica window.arContent");
+}
+animate();
+});
+});
+
+function animate() {
+requestAnimationFrame(animate);
+if (arToolkitSource.ready === false) return;
+arToolkitContext.update(arToolkitSource.domElement);
+renderer.render(scene, camera);
+}
+
+function createMarker(content, scene, arToolkitContext) {
+const markerRoot = new THREE.Group();
+scene.add(markerRoot);
+
+new THREEx.ArMarkerControls(arToolkitContext, markerRoot, {
+type: 'pattern',
+patternUrl: content.markerUrl,
+changeMatrixMode: 'cameraTransformMatrix'
+});
+
+const loader = new THREE.GLTFLoader();
+loader.load(content.modelUrl, (gltf) => {
+const model = gltf.scene;
+const box = new THREE.Box3().setFromObject(model);
+const size = box.getSize(new THREE.Vector3());
+const scale = 0.8 / Math.max(size.x, size.y, size.z);
+model.scale.set(scale, scale, scale);
+const center = box.getCenter(new THREE.Vector3());
+model.position.sub(center);
+markerRoot.add(model);
+
+console.log(`Modelo cargado: ${content.modelUrl}`);
+}, undefined, (error) => {
+console.error(`Error cargando modelo ${content.modelUrl}:`, error);
+});
+}
+}
+"""
+        src_path = os.path.join(GEN_DIR, "web-frontend-ar.js")
+        with open(src_path, "w", encoding="utf-8") as f:
+            f.write(web_frontend_ar_code)
+
+        destino_js_dir = os.path.join(WWW_DIR, "js")
+        os.makedirs(destino_js_dir, exist_ok=True)
+        shutil.copy2(src_path, destino_js_dir)
+        safe_log(self.logbox, f"✓ web-frontend-ar.js creado y copiado a {destino_js_dir}")
 
     def generar_iconos(self):
         """
@@ -2434,15 +2735,20 @@ window.addEventListener('resize', () => {
         Coordina la preparación del proyecto Capacitor, la generación de íconos,
         la actualización de configuraciones de Android y la compilación de Gradle.
         """
-        # --- Verificación e instalación de dependencias ---
-        if not instalar_o_actualizar_arjs_si_necesario(self.logbox):
-            self.set_progress("Error de dependencias de AR.js.", "red")
-            messagebox.showerror("Error", "No se pudo instalar/verificar la dependencia de AR.js. Revisa el log.")
-            return
-
+        safe_log(self.logbox, "--- INICIANDO PROCESO DE GENERACIÓN DE APK ---")
         nombre = limpiar_nombre(self.nombre_libro.get().strip())
         if not nombre:
             messagebox.showerror("Error", "El nombre del paquete está vacío.")
+            return
+
+        # --- Limpieza y Regeneración del Proyecto Android ---
+        if not limpiar_y_regenerar_android(self.logbox):
+            self.set_progress("Error regenerando proyecto Android.", "red")
+            return
+
+        # --- Generar el build.gradle raíz para estabilizar el entorno ---
+        if not generar_root_build_gradle(self.logbox):
+            self.set_progress("Error generando el build.gradle raíz.", "red")
             return
 
         # 1. Preparar el proyecto limpio desde la plantilla ANTES de cualquier otra cosa.
@@ -2462,6 +2768,11 @@ window.addEventListener('resize', () => {
         shutil.copytree(paquete_www_dir, capacitor_www_dir, dirs_exist_ok=True)
         safe_log(self.logbox, f"✓ Contenido web copiado a '{capacitor_www_dir}'.")
         
+        # Crear recursos de estilo para evitar errores de compilación de tema
+        crear_styles_xml(self.logbox)
+        crear_colors_xml(self.logbox)
+        crear_splash_background(self.logbox)
+
         try:
             # --- LÓGICA UNIFICADA Y DEFINITIVA PARA CONFIGURAR PAQUETE ---
             package_name = get_package_name(nombre)
@@ -2474,12 +2785,9 @@ window.addEventListener('resize', () => {
             # 2. Actualizar capacitor.config.json
             actualizar_capacitor_config(self.logbox, package_name, app_name)
             
-            # 3. Establecer el namespace en build.gradle
-            set_gradle_namespace(self.logbox, package_name)
-            
-            # Llamar a la nueva función para asegurar que buildDir es dinámico
-            if not actualizar_buildgradle_con_rutadinamica(nombre, self.logbox):
-                messagebox.showerror("Error Crítico", "No se pudo actualizar dinámicamente el archivo build.gradle. La compilación probablemente fallará.")
+            # 3. Generar un build.gradle completo y robusto
+            if not generar_build_gradle_completo(self.logbox, package_name):
+                messagebox.showerror("Error Crítico", "No se pudo generar el archivo build.gradle. La compilación fallará.")
                 self.set_progress("Error configurando build.gradle.", "red")
                 return
 
@@ -2516,6 +2824,12 @@ window.addEventListener('resize', () => {
         safe_log(self.logbox, "======== INICIANDO FLUJO DE BUILD DE APK ========")
 
         try:
+            # --- Verificación e instalación de dependencias ---
+            if not instalar_o_actualizar_arjs_si_necesario(self.logbox):
+                self.set_progress("Error de dependencias de AR.js.", "red")
+                messagebox.showerror("Error", "No se pudo instalar/verificar la dependencia de AR.js. Revisa el log.")
+                return
+
             # --- LIMPIEZA PROFUNDA ---
             dirs_a_borrar = [
                 os.path.join(ANDROID_DIR, "app", "build"),
@@ -2533,6 +2847,15 @@ window.addEventListener('resize', () => {
             safe_log(self.logbox, "Ejecutando 'npm install'...")
             subprocess.run("npm install", cwd=PROJECT_DIR, check=True, shell=True, capture_output=True, text=True)
             safe_log(self.logbox, "✓ Dependencias de npm instaladas.")
+
+            safe_log(self.logbox, "Instalando plugin de cámara de Capacitor...")
+            try:
+                subprocess.run(["npm", "install", "@capacitor/camera"], cwd=PROJECT_DIR, check=True, shell=True, capture_output=True, text=True)
+                safe_log(self.logbox, "✓ Plugin de cámara de Capacitor instalado.")
+            except Exception as e:
+                safe_log(self.logbox, f"✗ ERROR instalando el plugin de cámara: {e}")
+                messagebox.showerror("Error de Plugin", f"No se pudo instalar @capacitor/camera: {e}")
+                return # Stop the build
 
             # Asegurarse de que capacitor.js esté presente en www/
             ensure_capacitor_js(self.logbox, PROJECT_DIR)
