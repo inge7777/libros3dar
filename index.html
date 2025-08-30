@@ -1,0 +1,720 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Generador Web de Aplicaciones AR</title>
+    <style>
+        :root {
+            --primary-color: #3498db;
+            --secondary-color: #2ecc71;
+            --accent-color: #e74c3c;
+            --dark-color: #2c3e50;
+            --light-color: #ecf0f1;
+        }
+        
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        
+        body {
+            background-color: #f5f7fa;
+            color: #333;
+            line-height: 1.6;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        header {
+            background: linear-gradient(135deg, var(--primary-color), var(--dark-color));
+            color: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        
+        h1, h2, h3 {
+            margin-bottom: 15px;
+        }
+        
+        .tabs {
+            display: flex;
+            background-color: white;
+            border-radius: 8px;
+            overflow: hidden;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+        }
+        
+        .tab {
+            padding: 15px 25px;
+            cursor: pointer;
+            background-color: #f8f9fa;
+            border: none;
+            flex: 1;
+            font-weight: 600;
+            transition: all 0.3s ease;
+        }
+        
+        .tab.active {
+            background-color: var(--primary-color);
+            color: white;
+        }
+        
+        .tab-content {
+            display: none;
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
+            margin-bottom: 20px;
+        }
+        
+        .tab-content.active {
+            display: block;
+        }
+        
+        .form-group {
+            margin-bottom: 15px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 600;
+        }
+        
+        input[type="text"],
+        input[type="number"],
+        input[type="url"],
+        select,
+        textarea {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 16px;
+        }
+        
+        button {
+            background-color: var(--primary-color);
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 600;
+            transition: background-color 0.3s;
+        }
+        
+        button:hover {
+            background-color: #2980b9;
+        }
+        
+        button.secondary {
+            background-color: var(--secondary-color);
+        }
+        
+        button.secondary:hover {
+            background-color: #27ae60;
+        }
+        
+        button.accent {
+            background-color: var(--accent-color);
+        }
+        
+        button.accent:hover {
+            background-color: #c0392b;
+        }
+        
+        .file-upload {
+            border: 2px dashed #ddd;
+            padding: 20px;
+            text-align: center;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            cursor: pointer;
+            transition: border-color 0.3s;
+        }
+        
+        .file-upload:hover {
+            border-color: var(--primary-color);
+        }
+        
+        .file-list {
+            margin-top: 20px;
+        }
+        
+        .file-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px;
+            border-bottom: 1px solid #eee;
+        }
+        
+        .preview-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+            margin-top: 20px;
+        }
+        
+        .preview-card {
+            width: calc(33.333% - 15px);
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        
+        .preview-card img {
+            width: 100%;
+            height: 150px;
+            object-fit: cover;
+        }
+        
+        .preview-card .model-viewer {
+            width: 100%;
+            height: 150px;
+            background-color: #f0f0f0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .preview-card .card-content {
+            padding: 10px;
+        }
+        
+        .log-container {
+            background-color: #2c3e50;
+            color: white;
+            padding: 15px;
+            border-radius: 8px;
+            height: 300px;
+            overflow-y: auto;
+            font-family: monospace;
+            margin-top: 20px;
+        }
+        
+        .status-bar {
+            background-color: #f8f9fa;
+            padding: 10px;
+            border-radius: 4px;
+            margin-top: 20px;
+            font-weight: 600;
+        }
+        
+        .flex-row {
+            display: flex;
+            gap: 15px;
+        }
+        
+        .flex-row > * {
+            flex: 1;
+        }
+        
+        @media (max-width: 768px) {
+            .preview-card {
+                width: calc(50% - 10px);
+            }
+            
+            .flex-row {
+                flex-direction: column;
+            }
+        }
+        
+        @media (max-width: 480px) {
+            .preview-card {
+                width: 100%;
+            }
+            
+            .tabs {
+                flex-direction: column;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Generador Web de Aplicaciones AR</h1>
+            <p>Sube imágenes marcadoras y modelos 3D, genera patrones .patt, visualiza en 3D/AR y compila APKs</p>
+        </header>
+        
+        <div class="tabs">
+            <button class="tab active" onclick="switchTab(0)">Cargar Contenido</button>
+            <button class="tab" onclick="switchTab(1)">Visualizar Modelos</button>
+            <button class="tab" onclick="switchTab(2)">Realidad Aumentada</button>
+            <button class="tab" onclick="switchTab(3)">Generar APK</button>
+        </div>
+        
+        <!-- Pestaña 1: Cargar Contenido -->
+        <div class="tab-content active" id="tab-0">
+            <h2>Cargar Imágenes y Modelos 3D</h2>
+            
+            <div class="form-group">
+                <label for="app-name">Nombre de la Aplicación</label>
+                <input type="text" id="app-name" placeholder="Ingresa el nombre de la aplicación">
+            </div>
+            
+            <div class="flex-row">
+                <div>
+                    <h3>Imágenes Marcadoras</h3>
+                    <div class="file-upload" id="image-upload">
+                        <p>Haz clic o arrastra imágenes aquí para subirlas</p>
+                        <input type="file" id="image-input" multiple accept="image/*" style="display: none;">
+                    </div>
+                    
+                    <div class="file-list" id="image-list"></div>
+                </div>
+                
+                <div>
+                    <h3>Modelos 3D</h3>
+                    <div class="file-upload" id="model-upload">
+                        <p>Haz clic o arrastra modelos 3D aquí para subirlos</p>
+                        <input type="file" id="model-input" multiple accept=".glb,.gltf,.fbx" style="display: none;">
+                    </div>
+                    
+                    <div class="file-list" id="model-list"></div>
+                </div>
+            </div>
+            
+            <div class="form-group">
+                <button onclick="generatePatterns()" class="secondary">Generar Patrones .patt</button>
+            </div>
+            
+            <div class="status-bar" id="status-0">
+                Listo para cargar contenido
+            </div>
+        </div>
+        
+        <!-- Pestaña 2: Visualizar Modelos -->
+        <div class="tab-content" id="tab-1">
+            <h2>Visualización de Modelos 3D</h2>
+            
+            <div class="preview-container" id="model-preview">
+                <p>No hay modelos cargados todavía. Ve a la pestaña "Cargar Contenido" para subir modelos.</p>
+            </div>
+            
+            <div class="status-bar" id="status-1">
+                Sin modelos cargados
+            </div>
+        </div>
+        
+        <!-- Pestaña 3: Realidad Aumentada -->
+        <div class="tab-content" id="tab-2">
+            <h2>Visualizador de Realidad Aumentada</h2>
+            
+            <div class="form-group">
+                <label for="ar-marker">Seleccionar Marcador para RA</label>
+                <select id="ar-marker">
+                    <option value="">-- Selecciona un marcador --</option>
+                </select>
+            </div>
+            
+            <div id="ar-viewer">
+                <p>Selecciona un marcador para activar la cámara y visualizar la realidad aumentada.</p>
+            </div>
+            
+            <button onclick="startAR()" class="secondary">Iniciar RA</button>
+            <button onclick="stopAR()" class="accent">Detener RA</button>
+            
+            <div class="status-bar" id="status-2">
+                RA no iniciada
+            </div>
+        </div>
+        
+        <!-- Pestaña 4: Generar APK -->
+        <div class="tab-content" id="tab-3">
+            <h2>Generar APK para Dispositivos Móviles</h2>
+            
+            <div class="form-group">
+                <label for="package-name">Nombre del Paquete (ej: com.miempresa.miapp)</label>
+                <input type="text" id="package-name" placeholder="com.miempresa.miapp">
+            </div>
+            
+            <div class="form-group">
+                <label for="backend-url">URL del Backend de Activación</label>
+                <input type="url" id="backend-url" placeholder="https://tudominio.com/activar">
+            </div>
+            
+            <div class="form-group">
+                <label for="keys-amount">Cantidad de Claves de Activación</label>
+                <input type="number" id="keys-amount" value="100" min="1">
+            </div>
+            
+            <div class="form-group">
+                <button onclick="generateAPK()" class="secondary">Generar APK</button>
+            </div>
+            
+            <h3>Log de Generación</h3>
+            <div class="log-container" id="build-log">
+                [00:00:00] Sistema inicializado. Listo para generar APK.
+            </div>
+            
+            <div class="status-bar" id="status-3">
+                Preparado para compilar
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Variables globales
+        let uploadedImages = [];
+        let uploadedModels = [];
+        let generatedPatterns = [];
+        let currentTab = 0;
+        let arActive = false;
+        
+        // Inicialización
+        document.addEventListener('DOMContentLoaded', function() {
+            // Configurar subida de archivos
+            document.getElementById('image-upload').addEventListener('click', function() {
+                document.getElementById('image-input').click();
+            });
+            
+            document.getElementById('model-upload').addEventListener('click', function() {
+                document.getElementById('model-input').click();
+            });
+            
+            document.getElementById('image-input').addEventListener('change', handleImageUpload);
+            document.getElementById('model-input').addEventListener('change', handleModelUpload);
+            
+            // Configurar drag and drop
+            setupDragAndDrop('image-upload', handleImageUpload);
+            setupDragAndDrop('model-upload', handleModelUpload);
+        });
+        
+        // Cambiar pestañas
+        function switchTab(tabIndex) {
+            document.querySelectorAll('.tab').forEach((tab, index) => {
+                if (index === tabIndex) {
+                    tab.classList.add('active');
+                } else {
+                    tab.classList.remove('active');
+                }
+            });
+            
+            document.querySelectorAll('.tab-content').forEach((content, index) => {
+                if (index === tabIndex) {
+                    content.classList.add('active');
+                } else {
+                    content.classList.remove('active');
+                }
+            });
+            
+            currentTab = tabIndex;
+            
+            // Si es la pestaña de visualización, actualizar las vistas
+            if (tabIndex === 1) {
+                updateModelPreviews();
+            }
+            
+            // Si es la pestaña de RA, actualizar el selector de marcadores
+            if (tabIndex === 2) {
+                updateARMarkerSelector();
+            }
+        }
+        
+        // Configurar drag and drop
+        function setupDragAndDrop(elementId, callback) {
+            const element = document.getElementById(elementId);
+            
+            element.addEventListener('dragover', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                element.style.borderColor = '#3498db';
+            });
+            
+            element.addEventListener('dragleave', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                element.style.borderColor = '#ddd';
+            });
+            
+            element.addEventListener('drop', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                element.style.borderColor = '#ddd';
+                
+                const files = e.dataTransfer.files;
+                if (files.length > 0) {
+                    callback({target: {files: files}});
+                }
+            });
+        }
+        
+        // Manejar subida de imágenes
+        function handleImageUpload(event) {
+            const files = event.target.files;
+            if (!files || files.length === 0) return;
+            
+            for (let i = 0; i < files.length; i++) {
+                const file = files[i];
+                if (!file.type.match('image.*')) continue;
+                
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    uploadedImages.push({
+                        name: file.name,
+                        data: e.target.result,
+                        file: file
+                    });
+                    
+                    updateFileList('image-list', uploadedImages);
+                    updateStatus(`Imagen ${file.name} cargada`, 0);
+                };
+                reader.readAsDataURL(file);
+            }
+            
+            // Limpiar input
+            event.target.value = '';
+        }
+        
+        // Manejar subida de modelos 3D
+        function handleModelUpload(event) {
+            const files = event.target.files;
+            if (!files || files.length === 0) return;
+            
+            for (let i = 0; i < files.length; i++) {
+                const file = files[i];
+                if (!file.name.match(/\.(glb|gltf|fbx)$/i)) continue;
+                
+                uploadedModels.push({
+                    name: file.name,
+                    file: file,
+                    url: URL.createObjectURL(file)
+                });
+                
+                updateFileList('model-list', uploadedModels);
+                updateStatus(`Modelo 3D ${file.name} cargado`, 0);
+            }
+            
+            // Limpiar input
+            event.target.value = '';
+        }
+        
+        // Actualizar lista de archivos
+        function updateFileList(listId, items) {
+            const listElement = document.getElementById(listId);
+            listElement.innerHTML = '';
+            
+            items.forEach((item, index) => {
+                const itemElement = document.createElement('div');
+                itemElement.className = 'file-item';
+                
+                itemElement.innerHTML = `
+                    <span>${item.name}</span>
+                    <button onclick="removeFile(${index}, '${listId}')">Eliminar</button>
+                `;
+                
+                listElement.appendChild(itemElement);
+            });
+        }
+        
+        // Eliminar archivo
+        function removeFile(index, listId) {
+            if (listId === 'image-list') {
+                uploadedImages.splice(index, 1);
+                updateFileList('image-list', uploadedImages);
+            } else if (listId === 'model-list') {
+                uploadedModels.splice(index, 1);
+                updateFileList('model-list', uploadedModels);
+            }
+        }
+        
+        // Generar patrones .patt
+        function generatePatterns() {
+            if (uploadedImages.length === 0) {
+                updateStatus('No hay imágenes para generar patrones', 0);
+                return;
+            }
+            
+            updateStatus('Generando patrones .patt...', 0);
+            
+            // Simulación de generación de patrones
+            generatedPatterns = [];
+            
+            uploadedImages.forEach((image, index) => {
+                // En una implementación real, aquí se usaría OpenCV.js o se enviaría al servidor
+                const patternName = image.name.replace(/\.[^/.]+$/, "") + '.patt';
+                generatedPatterns.push({
+                    name: patternName,
+                    image: image.name
+                });
+                
+                // Simular retraso de procesamiento
+                setTimeout(() => {
+                    updateStatus(`Patrón generado: ${patternName}`, 0);
+                    
+                    if (index === uploadedImages.length - 1) {
+                        updateStatus('Todos los patrones han sido generados', 0);
+                        updateARMarkerSelector();
+                    }
+                }, 500 * index);
+            });
+        }
+        
+        // Actualizar selector de marcadores AR
+        function updateARMarkerSelector() {
+            const selector = document.getElementById('ar-marker');
+            selector.innerHTML = '<option value="">-- Selecciona un marcador --</option>';
+            
+            generatedPatterns.forEach((pattern, index) => {
+                const option = document.createElement('option');
+                option.value = index;
+                option.textContent = pattern.name;
+                selector.appendChild(option);
+            });
+        }
+        
+        // Actualizar vistas previas de modelos
+        function updateModelPreviews() {
+            const container = document.getElementById('model-preview');
+            
+            if (uploadedModels.length === 0) {
+                container.innerHTML = '<p>No hay modelos cargados todavía. Ve a la pestaña "Cargar Contenido" para subir modelos.</p>';
+                return;
+            }
+            
+            container.innerHTML = '';
+            
+            uploadedModels.forEach(model => {
+                const card = document.createElement('div');
+                card.className = 'preview-card';
+                
+                card.innerHTML = `
+                    <div class="model-viewer">
+                        <p>Vista previa de: ${model.name}</p>
+                    </div>
+                    <div class="card-content">
+                        <h4>${model.name}</h4>
+                        <p>Modelo 3D cargado correctamente</p>
+                    </div>
+                `;
+                
+                container.appendChild(card);
+            });
+        }
+        
+        // Iniciar realidad aumentada
+        function startAR() {
+            const markerIndex = document.getElementById('ar-marker').value;
+            if (markerIndex === "" || generatedPatterns.length === 0) {
+                updateStatus('Selecciona un marcador válido', 2);
+                return;
+            }
+            
+            updateStatus('Iniciando realidad aumentada...', 2);
+            arActive = true;
+            
+            // Simulación de RA - en una implementación real se usaría AR.js o similar
+            const arViewer = document.getElementById('ar-viewer');
+            arViewer.innerHTML = `
+                <div style="width: 100%; height: 400px; background-color: #000; position: relative; overflow: hidden; border-radius: 8px;">
+                    <div style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: flex; align-items: center; justify-content: center; color: white;">
+                        <div style="text-align: center;">
+                            <h3>Vista de Realidad Aumentada</h3>
+                            <p>Mostrando marcador para: ${generatedPatterns[markerIndex].name}</p>
+                            <p>En una implementación real, aquí verías la cámara con el overlay AR</p>
+                            <div style="width: 200px; height: 200px; margin: 0 auto; border: 2px dashed #3498db; display: flex; align-items: center; justify-content: center;">
+                                Modelo AR Aquí
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            updateStatus('RA activa. Mostrando marcador: ' + generatedPatterns[markerIndex].name, 2);
+        }
+        
+        // Detener realidad aumentada
+        function stopAR() {
+            arActive = false;
+            const arViewer = document.getElementById('ar-viewer');
+            arViewer.innerHTML = '<p>Selecciona un marcador para activar la cámara y visualizar la realidad aumentada.</p>';
+            updateStatus('RA detenida', 2);
+        }
+        
+        // Generar APK
+        function generateAPK() {
+            const appName = document.getElementById('app-name').value;
+            const packageName = document.getElementById('package-name').value;
+            const backendUrl = document.getElementById('backend-url').value;
+            const keysAmount = document.getElementById('keys-amount').value;
+            
+            if (!appName || !packageName || !backendUrl) {
+                updateStatus('Completa todos los campos requeridos', 3);
+                return;
+            }
+            
+            if (uploadedImages.length === 0 || uploadedModels.length === 0) {
+                updateStatus('Debes cargar al menos una imagen y un modelo 3D', 3);
+                return;
+            }
+            
+            if (generatedPatterns.length === 0) {
+                updateStatus('Debes generar los patrones .patt primero', 3);
+                return;
+            }
+            
+            updateStatus('Iniciando generación de APK...', 3);
+            addToLog('Iniciando proceso de generación de APK...');
+            
+            // Simulación del proceso de compilación
+            simulateBuildProcess();
+        }
+        
+        // Simular proceso de compilación
+        function simulateBuildProcess() {
+            const steps = [
+                {message: 'Validando configuración...', delay: 1000},
+                {message: 'Copiando recursos de la plantilla...', delay: 1500},
+                {message: 'Generando archivos de configuración de Android...', delay: 2000},
+                {message: 'Compilando código Java...', delay: 2500},
+                {message: 'Empaquetando recursos de la aplicación...', delay: 3000},
+                {message: 'Firmando APK...', delay: 2000},
+                {message: 'APK generado correctamente!', delay: 1000}
+            ];
+            
+            let totalDelay = 0;
+            steps.forEach((step, index) => {
+                setTimeout(() => {
+                    addToLog(step.message);
+                    
+                    if (index === steps.length - 1) {
+                        updateStatus('APK generado con éxito', 3);
+                    }
+                }, totalDelay);
+                
+                totalDelay += step.delay;
+            });
+        }
+        
+        // Añadir mensaje al log
+        function addToLog(message) {
+            const log = document.getElementById('build-log');
+            const timestamp = new Date().toTimeString().split(' ')[0];
+            log.innerHTML += `\n[${timestamp}] ${message}`;
+            log.scrollTop = log.scrollHeight;
+        }
+        
+        // Actualizar barra de estado
+        function updateStatus(message, tabIndex) {
+            const statusElement = document.getElementById(`status-${tabIndex}`);
+            statusElement.textContent = message;
+        }
+    </script>
+</body>
+</html>
