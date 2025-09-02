@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <title>Visor de Realidad Aumentada</title>
+  <style>
+    html, body, #ar-container { width: 100vw; height: 100vh; margin: 0; padding: 0; overflow: hidden; background: black; }
+    #loading-msg { color: white; font-size: 2em; position: absolute; top: 45%; left: 50%; transform: translate(-50%,-50%); z-index:100; text-shadow: 0 2px 8px #000; }
+    #close-btn { position: fixed; top:10px;right:10px; background:#eee; border:none; padding:10px; z-index:10000; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <div id="ar-container"></div>
+  <div id="loading-msg">Cargando...</div>
+  <button id="close-btn" onclick="window.close();">Cerrar AR</button>
+
+  <!-- Librerías desde CDN - Versión Final y Compatible -->
+  <script src="https://unpkg.com/three@0.125.2/build/three.min.js"></script>
+  <script src="https://unpkg.com/three@0.125.2/examples/js/loaders/GLTFLoader.js"></script>
+  <script src="https://raw.githack.com/jeromeetienne/AR.js/master/three.js/build/ar-threex.js"></script>
+
+  <script>
+(async () => {
+  const loading = document.getElementById('loading-msg');
+  function showLoading(msg) { loading.innerText = msg; loading.style.display = "block"; }
+  function hideLoading() { loading.style.display = "none"; }
+
+  try {
+    showLoading("Cargando mapa de assets...");
+    let resp = await fetch("assets/asset-map.json");
+    if (!resp.ok) throw new Error("No se encontró assets/asset-map.json (404)");
+    let assetMap = await resp.json();
+
+    const patterns = Object.keys(assetMap);
+    if (patterns.length === 0) throw new Error("El asset-map.json está vacío.");
+
+    showLoading("Iniciando cámara y AR.js...");
+    const container = document.getElementById('ar-container');
+    const scene = new THREE.Scene();
+    const camera = new THREE.Camera();
+    scene.add(camera);
+
+    const renderer = new THREE.WebGLRenderer({ alpha:true, antialias:true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    container.appendChild(renderer.domElement);
+
+    const arToolkitSource = new THREEx.ArToolkitSource({ sourceType: 'webcam' });
+    await new Promise(resolve => source.init(resolve));
+    
+    function onResize() {
+        arToolkitSource.onResizeElement();
+        arToolkitSource.copyElementSizeTo(renderer.domElement);
+        if (context.arController) arToolkitSource.copyElementSizeTo(context.arController.canvas);
+    }
+    window.addEventListener('resize', onResize);
+    onResize();
+
+    const arToolkitContext = new THREEx.ArToolkitContext({
+      cameraParametersUrl: 'data/camera_para.dat',
+      detectionMode: 'mono'
+    });
+    await new Promise((resolve) => {
+      arToolkitContext.init(() => {
+        camera.projectionMatrix.copy(arToolkitContext.getProjectionMatrix());
+        resolve();
+      });
+    });
+
+    showLoading(`Cargando ${patterns.length} patrones y modelos...`);
+    const loader = new THREE.GLTFLoader();
+    const markerRoots = {};
+    const models = {};
+    scene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 2));
+
+    for (const patt of patterns) {
+      const root = new THREE.Group();
+      scene.add(root);
+      new THREEx.ArMarkerControls(arToolkitContext, root, {
+        type: 'pattern',
+        patternUrl: 'assets/patterns/' + patt
+      });
+      markerRoots[patt] = root;
+      models[patt] = null;
+
+      await new Promise((resolve) => {
+        loader.load('assets/models/' + assetMap[patt], gltf => {
+          gltf.scene.visible = false;
+          gltf.scene.scale.set(0.5, 0.5, 0.5);
+          gltf.scene.rotation.set(-Math.PI / 2, 0, 0);
+          root.add(gltf.scene);
+          models[patt] = gltf.scene;
+          resolve();
+        }, undefined, err => {
+          console.error("Error cargando modelo:", assetMap[patt], err);
+          resolve();
+        });
+      });
+    }
+
+    showLoading("¡Listo! Apunta la cámara a tus marcadores.");
+    setTimeout(hideLoading, 2000);
+
+    function animate() {
+      requestAnimationFrame(animate);
+      if (arToolkitSource.ready) arToolkitContext.update(arToolkitSource.domElement);
+      for (const patt in markerRoots) {
+        if (models[patt]) models[patt].visible = markerRoots[patt].visible;
+      }
+      renderer.render(scene, camera);
+    }
+    animate();
+
+  } catch(e) {
+    showLoading('ERROR: ' + e.message);
+    console.error(e);
+  }
+})();
+  </script>
+</body>
+</html>
