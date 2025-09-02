@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>AR - Versión Final Corregida</title>
+  <style>
+    body { margin: 0; overflow: hidden; }
+    canvas { display: block; }
+    #debug { position: absolute; top: 10px; left: 10px; color: white; background: rgba(0,0,0,0.5); padding: 10px; }
+  </style>
+</head>
+<body>
+  <div id="debug">Cargando...</div>
+
+  <!-- Librerías en orden correcto -->
+  <script src="assets/js/three.min.js"></script>
+  <script src="assets/js/GLTFLoader.js"></script>
+  <script src="https://raw.githack.com/AR-js-org/AR.js/master/three.js/build/ar-threex.js"></script>
+
+  <script>
+    (async () => {
+      const debug = document.getElementById('debug');
+      
+      try {
+        debug.innerHTML = '📦 Cargando librerías...';
+
+        if (!window.THREE) throw new Error('THREE no está definido');
+        if (!window.THREEx) throw new Error('AR.js no está definido');
+
+        debug.innerHTML = '📷 Inicializando cámara...';
+
+        const renderer = new THREE.WebGLRenderer({ alpha: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        const scene = new THREE.Scene();
+        const camera = new THREE.Camera();
+        scene.add(camera);
+
+        scene.add(new THREE.AmbientLight(0xffffff, 0.8));
+        scene.add(new THREE.DirectionalLight(0xffffff, 0.5));
+
+        const source = new THREEx.ArToolkitSource({ sourceType: 'webcam' });
+        await new Promise(resolve => source.init(resolve));
+        
+        const context = new THREEx.ArToolkitContext({
+          cameraParametersUrl: 'data/camera_para.dat',
+          detectionMode: 'mono'
+        });
+        await new Promise(resolve => context.init(resolve));
+        camera.projectionMatrix.copy(context.getProjectionMatrix());
+
+        debug.innerHTML = '✅ AR inicializado - Muestra marcador';
+
+        const markerRoot = new THREE.Group();
+        scene.add(markerRoot);
+        
+        new THREEx.ArMarkerControls(context, markerRoot, {
+          type: 'pattern',
+          patternUrl: 'assets/patterns/hiro.patt'
+        });
+
+        const geometry = new THREE.BoxGeometry(1, 1, 1);
+        const material = new THREE.MeshNormalMaterial();
+        const cube = new THREE.Mesh(geometry, material);
+        markerRoot.add(cube);
+
+        const loader = new THREE.GLTFLoader();
+        loader.load(
+          'assets/models/duck.glb',
+          gltf => {
+            debug.innerHTML = '✅ Modelo cargado - Muestra marcador';
+            markerRoot.clear();
+            gltf.scene.scale.set(0.5, 0.5, 0.5);
+            markerRoot.add(gltf.scene);
+          },
+          () => {},
+          err => console.error('❌ Error modelo:', err)
+        );
+
+        function animate() {
+          requestAnimationFrame(animate);
+          if (source.ready) context.update(source.domElement);
+          renderer.render(scene, camera);
+        }
+        animate();
+
+      } catch (error) {
+        debug.innerHTML = `❌ Error: ${error.message}`;
+        console.error(error);
+      }
+    })();
+  </script>
+</body>
+</html>
